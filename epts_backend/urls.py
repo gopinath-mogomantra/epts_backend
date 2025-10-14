@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.urls import path, include, re_path
-from django.http import JsonResponse
+from django.shortcuts import render
 from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
 from rest_framework import permissions
@@ -9,10 +9,7 @@ from django.conf.urls.static import static
 
 # ✅ Define the home view BEFORE urlpatterns
 def home(request):
-    return JsonResponse({
-        "status": "ok",
-        "message": "EPTS Backend is running successfully 🚀"
-    })
+    return render(request, 'home.html')
 
 # Swagger schema setup
 schema_view = get_schema_view(
@@ -29,14 +26,14 @@ schema_view = get_schema_view(
 )
 
 urlpatterns = [
-    # ✅ Root URL returns JSON confirmation
+    # ✅ Root URL returns the HTML UI
     path('', home),
 
     # Admin panel
     path('admin/', admin.site.urls),
-    path('api/users/', include('users.urls')), 
 
     # API modules  
+    path('api/users/', include('users.urls')),
     path('api/employee/', include('employee.urls')),
     path('api/performance/', include('performance.urls')),
 
@@ -50,10 +47,3 @@ urlpatterns = [
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
-
-
-from django.shortcuts import render
-
-def home(request):
-    return render(request, 'home.html')
-
