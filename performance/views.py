@@ -26,7 +26,7 @@ from employee.models import Employee
 # ==========================================================
 class PerformanceListCreateView(generics.ListCreateAPIView):
     """
-    GET  -> List all employee performance evaluations
+    GET  -> List all performance evaluations (Admin/Manager)
     POST -> Create a new evaluation record (Admin/Manager)
     """
     queryset = PerformanceEvaluation.objects.select_related(
@@ -40,9 +40,10 @@ class PerformanceListCreateView(generics.ListCreateAPIView):
         return PerformanceEvaluationSerializer
 
     def create(self, request, *args, **kwargs):
-        """Restrict POST access to Admin/Manager roles only."""
+        """Allow only Admin/Manager to create new evaluations."""
         user = request.user
         user_role = getattr(user, "role", None)
+
         if str(user_role).lower() not in ["admin", "manager"]:
             return Response(
                 {"error": "Only Admin or Manager can create evaluations."},
@@ -52,9 +53,10 @@ class PerformanceListCreateView(generics.ListCreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         instance = serializer.save(evaluator=request.user)
+
         return Response(
             {
-                "message": "Performance evaluation recorded successfully.",
+                "message": "✅ Performance evaluation recorded successfully.",
                 "data": PerformanceEvaluationSerializer(instance).data,
             },
             status=status.HTTP_201_CREATED,
@@ -62,7 +64,7 @@ class PerformanceListCreateView(generics.ListCreateAPIView):
 
 
 # ==========================================================
-# ✅ 2. DETAIL VIEW
+# ✅ 2. DETAIL VIEW (GET SINGLE RECORD)
 # ==========================================================
 class PerformanceDetailView(generics.RetrieveAPIView):
     """
@@ -76,7 +78,7 @@ class PerformanceDetailView(generics.RetrieveAPIView):
 
 
 # ==========================================================
-# ✅ 3. PERFORMANCE SUMMARY (TOP & WEAK 3)
+# ✅ 3. PERFORMANCE SUMMARY (TOP 3 & WEAK 3)
 # ==========================================================
 class PerformanceSummaryView(APIView):
     """
@@ -86,6 +88,13 @@ class PerformanceSummaryView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        user = request.user
+        if str(getattr(user, "role", "")).lower() not in ["admin", "manager"]:
+            return Response(
+                {"error": "Access denied. Only Admin or Manager can view summary."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         # Get latest evaluation per employee
         latest_evals = (
             PerformanceEvaluation.objects.values("employee")
@@ -110,7 +119,6 @@ class PerformanceSummaryView(APIView):
                 "name": f"{user.first_name} {user.last_name}".strip(),
                 "department": getattr(obj.department, "name", "N/A") if obj.department else "N/A",
                 "total_score": obj.total_score,
-                "average_score": obj.average_score,
                 "evaluation_type": obj.evaluation_type,
                 "review_date": obj.review_date,
             }
@@ -129,8 +137,8 @@ class PerformanceSummaryView(APIView):
 # ==========================================================
 class EmployeeDashboardView(APIView):
     """
-    Shows logged-in employee’s own performance history.
-    Displays evaluation type, total score, remarks, etc.
+    Displays logged-in employee’s own performance history.
+    Each record shows evaluation type, score, remarks, etc.
     """
     permission_classes = [permissions.IsAuthenticated]
 

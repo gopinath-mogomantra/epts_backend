@@ -3,19 +3,21 @@
 # ===============================================
 # Handles:
 # 1. JWT Authentication (Login, Token Refresh)
-# 2. User Registration (with optional auto password)
-# 3. Profile Retrieval
+# 2. Admin-based User Registration
+# 3. Profile Retrieval (Self)
 # 4. Password Change
 # 5. Role Listing
-# 6. Admin-only: List All Users
+# 6. Admin-Only: User List
 # ===============================================
 
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
 from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.contrib.auth import get_user_model
+from django.utils import timezone
+
 from .serializers import (
     CustomTokenObtainPairSerializer,
     RegisterSerializer,
@@ -25,12 +27,14 @@ from .serializers import (
 
 User = get_user_model()
 
+
 # =====================================================
 # ✅ 1. LOGIN API (JWT Token Obtain View)
 # =====================================================
 class ObtainTokenPairView(TokenObtainPairView):
     """
-    Authenticates users using email/password and returns JWT tokens.
+    Authenticates users using username/password and returns JWT tokens
+    along with role and employee info.
     """
     permission_classes = (AllowAny,)
     serializer_class = CustomTokenObtainPairSerializer
@@ -40,26 +44,29 @@ class ObtainTokenPairView(TokenObtainPairView):
 # ✅ 2. REFRESH TOKEN API
 # =====================================================
 class RefreshTokenView(TokenRefreshView):
+    """
+    Refreshes expired access tokens using a valid refresh token.
+    """
     permission_classes = (AllowAny,)
 
 
 # =====================================================
-# ✅ 3. USER REGISTRATION API (Admin Only)
+# ✅ 3. USER REGISTRATION (Admin / Superuser Only)
 # =====================================================
 class RegisterView(generics.CreateAPIView):
     """
-    Admins or Superusers can register new users (employees/managers).
-    Auto-generates a password if not provided.
+    Allows Admin or Superuser to register new users.
+    Automatically creates a user with optional password.
     """
     queryset = User.objects.all()
     permission_classes = [IsAuthenticated]
     serializer_class = RegisterSerializer
 
     def create(self, request, *args, **kwargs):
-        user = request.user
+        current_user = request.user
 
-        # 🔐 Allow only Admins or Superusers to register new users
-        if not (user.is_superuser or user.role == "Admin"):
+        # Restrict to Admins or Superusers only
+        if not (current_user.is_superuser or getattr(current_user, "role", None) == "Admin"):
             return Response(
                 {"error": "Only Admins or Superusers can create new users."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -69,9 +76,14 @@ class RegisterView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         new_user = serializer.save()
 
+        # Auto-generate Employee joining date if not provided
+        if not getattr(new_user, "joining_date", None):
+            new_user.joining_date = timezone.now().date()
+            new_user.save(update_fields=["joining_date"])
+
         return Response(
             {
-                "message": "User registered successfully.",
+                "message": "✅ User registered successfully.",
                 "user": ProfileSerializer(new_user).data,
             },
             status=status.HTTP_201_CREATED,
@@ -83,19 +95,16 @@ class RegisterView(generics.CreateAPIView):
 # =====================================================
 class ProfileView(APIView):
     """
-    Retrieve profile details of the currently logged-in user.
+    Retrieves the profile details of the currently logged-in user.
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         user = request.user
-
-        # ✅ Safety checks
         if not user.is_active:
-            return Response({"error": "Your account is inactive."}, status=403)
-
+            return Response({"error": "Your account is inactive."}, status=status.HTTP_403_FORBIDDEN)
         serializer = ProfileSerializer(user)
-        return Response(serializer.data, status=200)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 # =====================================================
@@ -103,7 +112,7 @@ class ProfileView(APIView):
 # =====================================================
 class ChangePasswordView(generics.UpdateAPIView):
     """
-    Allow any logged-in user to change their password.
+    Allows authenticated users to change their password.
     """
     permission_classes = [IsAuthenticated]
     serializer_class = ChangePasswordSerializer
@@ -115,7 +124,7 @@ class ChangePasswordView(generics.UpdateAPIView):
         serializer = self.get_serializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
         serializer.save()
-        return Response({"message": "Password updated successfully."}, status=200)
+        return Response({"message": "🔐 Password updated successfully."}, status=status.HTTP_200_OK)
 
 
 # =====================================================
@@ -123,14 +132,14 @@ class ChangePasswordView(generics.UpdateAPIView):
 # =====================================================
 class RoleListView(APIView):
     """
-    Returns list of available roles.
-    Used by frontend dropdowns (Admin, Manager, Employee).
+    Returns the list of available roles.
+    (Useful for frontend dropdowns in user creation forms.)
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         roles = ["Admin", "Manager", "Employee"]
-        return Response({"roles": roles}, status=200)
+        return Response({"roles": roles}, status=status.HTTP_200_OK)
 
 
 # =====================================================
@@ -138,15 +147,15 @@ class RoleListView(APIView):
 # =====================================================
 class UserListView(generics.ListAPIView):
     """
-    Lists all registered users (Admins only).
+    Lists all registered users (Admins / Superusers only).
     """
-    queryset = User.objects.all()
+    queryset = User.objects.all().order_by("emp_id")
     serializer_class = ProfileSerializer
     permission_classes = [IsAuthenticated]
 
     def list(self, request, *args, **kwargs):
         # Restrict to Admins or Superusers
-        if not (request.user.is_superuser or request.user.role == "Admin"):
-            return Response({"error": "Access denied. Admins only."}, status=403)
+        if not (request.user.is_superuser or getattr(request.user, "role", None) == "Admin"):
+            return Response({"error": "Access denied. Admins only."}, status=status.HTTP_403_FORBIDDEN)
 
         return super().list(request, *args, **kwargs)

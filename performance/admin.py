@@ -2,7 +2,7 @@
 # performance/admin.py
 # ===============================================
 # Admin registration for Performance Evaluation module.
-# Supports filtering, search, and inline metric management.
+# Supports filtering, search, and optimized performance view.
 # ===============================================
 
 from django.contrib import admin
@@ -29,7 +29,6 @@ class PerformanceEvaluationAdmin(admin.ModelAdmin):
         "review_date",
         "evaluation_period",
         "colored_total_score",
-        "average_score",
         "evaluator",
     )
 
@@ -60,7 +59,6 @@ class PerformanceEvaluationAdmin(admin.ModelAdmin):
     # ------------------------------------------------------
     readonly_fields = (
         "total_score",
-        "average_score",
         "created_at",
         "updated_at",
     )
@@ -92,7 +90,7 @@ class PerformanceEvaluationAdmin(admin.ModelAdmin):
             },
         ),
         (
-            "Performance Metrics",
+            "Performance Metrics (0–100)",
             {
                 "fields": (
                     "communication_skills",
@@ -118,7 +116,6 @@ class PerformanceEvaluationAdmin(admin.ModelAdmin):
             {
                 "fields": (
                     "total_score",
-                    "average_score",
                     "remarks",
                     "created_at",
                     "updated_at",
@@ -150,9 +147,9 @@ class PerformanceEvaluationAdmin(admin.ModelAdmin):
     def colored_total_score(self, obj):
         """Color-code total score for visual clarity."""
         color = "green"
-        if obj.average_score < 50:
+        if obj.total_score < 750:
             color = "red"
-        elif 50 <= obj.average_score < 75:
+        elif 750 <= obj.total_score < 1100:
             color = "orange"
         return format_html(f"<b><span style='color:{color}'>{obj.total_score}</span></b>")
     colored_total_score.short_description = "Total Score"
@@ -161,7 +158,7 @@ class PerformanceEvaluationAdmin(admin.ModelAdmin):
     # Save logic (ensures total_score auto recalculates)
     # ------------------------------------------------------
     def save_model(self, request, obj, form, change):
-        obj.save()  # model.save() auto-updates total_score & average_score
+        obj.save()  # model.save() auto-updates total_score
         super().save_model(request, obj, form, change)
 
     # ------------------------------------------------------

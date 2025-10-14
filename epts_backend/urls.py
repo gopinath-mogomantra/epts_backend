@@ -1,23 +1,31 @@
+# epts_backend/urls.py
 from django.contrib import admin
 from django.urls import path, include, re_path
 from django.shortcuts import render
+from django.conf import settings
+from django.conf.urls.static import static
+
 from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
 from rest_framework import permissions
-from django.conf import settings
-from django.conf.urls.static import static
-from .views import home
 
-# ✅ Define the home view BEFORE urlpatterns
+
+# -------------------------------------------------------------------
+# SIMPLE HOME VIEW (optional landing page)
+# -------------------------------------------------------------------
 def home(request):
-    return render(request, 'home.html')
+    """Simple home endpoint for base URL /"""
+    return render(request, "home.html")
 
-# Swagger schema setup
+
+# -------------------------------------------------------------------
+# SWAGGER / REDOC DOCUMENTATION
+# -------------------------------------------------------------------
 schema_view = get_schema_view(
     openapi.Info(
-        title="EPTS API",
-        default_version='v1',
-        description="Employee Performance Tracking System API documentation",
+        title="Employee Performance Tracking System (EPTS) API",
+        default_version=getattr(settings, "VERSION", "v1"),
+        description="Comprehensive API documentation for EPTS backend services.",
         terms_of_service="https://www.google.com/policies/terms/",
         contact=openapi.Contact(email="support@epts.com"),
         license=openapi.License(name="BSD License"),
@@ -26,25 +34,47 @@ schema_view = get_schema_view(
     permission_classes=(permissions.AllowAny,),
 )
 
+# -------------------------------------------------------------------
+# URL ROUTES
+# -------------------------------------------------------------------
 urlpatterns = [
-    # ✅ Root URL returns the HTML UI
+    # Root route
     path("", home, name="home"),
 
-    # Admin panel
-    path('admin/', admin.site.urls),
+    # Django admin
+    path("admin/", admin.site.urls),
 
-    # API modules  
-    path('api/users/', include('users.urls')),
-    path('api/employee/', include('employee.urls')),
-    path('api/performance/', include('performance.urls')),
-
-    # Swagger and Redoc routes
-    re_path(r'^swagger(?P<format>\.json|\.yaml)$', schema_view.without_ui(cache_timeout=0), name='schema-json'),
-    path('swagger/', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),
-    path('redoc/', schema_view.with_ui('redoc', cache_timeout=0), name='schema-redoc'),
+    # App routes
+    path("api/users/", include("users.urls")),
+    path("api/employee/", include("employee.urls")),
+    path("api/performance/", include("performance.urls")),
 ]
 
-# Serve media/static files in debug
+# -------------------------------------------------------------------
+# Swagger / Redoc routes (only enabled in DEBUG mode)
+# -------------------------------------------------------------------
+if settings.DEBUG:
+    urlpatterns += [
+        re_path(
+            r"^swagger(?P<format>\.json|\.yaml)$",
+            schema_view.without_ui(cache_timeout=0),
+            name="schema-json",
+        ),
+        path(
+            "swagger/",
+            schema_view.with_ui("swagger", cache_timeout=0),
+            name="schema-swagger-ui",
+        ),
+        path(
+            "redoc/",
+            schema_view.with_ui("redoc", cache_timeout=0),
+            name="schema-redoc",
+        ),
+    ]
+
+# -------------------------------------------------------------------
+# STATIC & MEDIA FILES (dev only)
+# -------------------------------------------------------------------
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

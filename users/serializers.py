@@ -1,9 +1,11 @@
 # ===============================================
+# users/serializers.py
+# ===============================================
 # Handles:
 # 1. JWT Token Serializer (Login)
-# 2. User Registration (auto password if missing)
-# 3. Change Password
-# 4. Profile Details
+# 2. User Registration (Admin/HR only)
+# 3. Change Password (Authenticated users)
+# 4. Profile Serializer (Read-only details)
 # ===============================================
 
 from rest_framework import serializers
@@ -21,12 +23,16 @@ User = get_user_model()
 # =====================================================
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
-    Extends JWT payload to include extra user details.
+    Extends the JWT token payload to include user role, emp_id, and basic info.
     """
+
+    username_field = "username"  # explicit field for clarity
 
     @classmethod
     def get_token(cls, user):
         token = super().get_token(user)
+        # Embed user info into the token payload
+        token["username"] = user.username
         token["email"] = user.email
         token["role"] = user.role
         token["first_name"] = user.first_name
@@ -36,8 +42,10 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
     def validate(self, attrs):
         data = super().validate(attrs)
+        # Include user details in response body (not just token)
         data["user"] = {
             "id": self.user.id,
+            "username": self.user.username,
             "email": self.user.email,
             "first_name": self.user.first_name,
             "last_name": self.user.last_name,
@@ -52,8 +60,8 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 # =====================================================
 class RegisterSerializer(serializers.ModelSerializer):
     """
-    Used by Admins/HR to create new employees or managers.
-    Auto-generates a random secure password if none is provided.
+    Used by Admins or HR to onboard new employees or managers.
+    Auto-generates a secure password if not provided.
     """
 
     password = serializers.CharField(
@@ -66,6 +74,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "emp_id",
+            "username",
             "email",
             "first_name",
             "last_name",
@@ -82,7 +91,6 @@ class RegisterSerializer(serializers.ModelSerializer):
         password = attrs.get("password")
         password2 = attrs.get("password2")
 
-        # Only check if both fields are provided
         if password or password2:
             if password != password2:
                 raise serializers.ValidationError(
@@ -94,16 +102,18 @@ class RegisterSerializer(serializers.ModelSerializer):
         validated_data.pop("password2", None)
         password = validated_data.pop("password", None)
 
-        # ✅ Auto-generate random password if not provided
+        # ✅ Auto-generate random password if none provided
         if not password:
             password = "".join(
-                random.choices(string.ascii_letters + string.digits + "!@#$%^&*", k=10)
+                random.choices(
+                    string.ascii_letters + string.digits + "!@#$%^&*",
+                    k=10,
+                )
             )
 
         user = User.objects.create_user(password=password, **validated_data)
 
-        # NOTE: For production, send password to user's email here
-        # Example (future): send_email_to_user(user.email, password)
+        # ⚠️ In production: Send the password to the user's official email securely
         return user
 
 
@@ -112,7 +122,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 # =====================================================
 class ChangePasswordSerializer(serializers.Serializer):
     """
-    Allows any authenticated user to change their password.
+    Enables any authenticated user to update their password.
     """
 
     old_password = serializers.CharField(write_only=True, required=True)
@@ -123,7 +133,7 @@ class ChangePasswordSerializer(serializers.Serializer):
     def validate_old_password(self, value):
         user = self.context["request"].user
         if not user.check_password(value):
-            raise serializers.ValidationError("Old password is not correct.")
+            raise serializers.ValidationError("Old password is incorrect.")
         return value
 
     def save(self, **kwargs):
@@ -134,23 +144,29 @@ class ChangePasswordSerializer(serializers.Serializer):
 
 
 # =====================================================
-# ✅ 4. Profile Serializer
+# ✅ 4. Profile Serializer (Read-Only)
 # =====================================================
 class ProfileSerializer(serializers.ModelSerializer):
     """
-    Read-only profile info for logged-in users.
+    Returns detailed, read-only profile info for authenticated users.
     """
+
+    department_name = serializers.CharField(
+        source="department.name", read_only=True
+    )
 
     class Meta:
         model = User
         fields = [
             "id",
             "emp_id",
+            "username",
             "email",
             "first_name",
             "last_name",
             "role",
             "department",
+            "department_name",
             "phone",
             "joining_date",
             "is_verified",
@@ -159,7 +175,11 @@ class ProfileSerializer(serializers.ModelSerializer):
         read_only_fields = [
             "id",
             "emp_id",
+            "username",
             "email",
             "role",
             "joining_date",
+            "is_verified",
+            "is_active",
+            "department_name",
         ]

@@ -11,7 +11,7 @@ from django.utils import timezone
 
 
 # =====================================================
-# ✅ Helper Functions (Fix for Lambda Serialization)
+# ✅ Helper Functions
 # =====================================================
 def current_week_number():
     """Return the current ISO week number."""
@@ -32,6 +32,7 @@ class PerformanceEvaluation(models.Model):
     Used for employee dashboards, performance ranking, and reports.
     """
 
+    # --- Foreign Keys ---
     employee = models.ForeignKey(
         "employee.Employee",
         on_delete=models.CASCADE,
@@ -63,10 +64,8 @@ class PerformanceEvaluation(models.Model):
         max_length=120,
         blank=True,
         default="",
-        help_text="E.g., WK:10/Oct/2025 - 16/Oct/2025",
+        help_text="E.g., WK:10/Nov/2025 - 16/Nov/2025",
     )
-
-    # ✅ Fixed: use named callables for Django migration compatibility
     week_number = models.PositiveSmallIntegerField(default=current_week_number)
     year = models.PositiveSmallIntegerField(default=current_year)
 
@@ -100,9 +99,9 @@ class PerformanceEvaluation(models.Model):
     attendance = models.PositiveSmallIntegerField(default=0)
     punctuality = models.PositiveSmallIntegerField(default=0)
 
-    # --- Computed Fields ---
-    total_score = models.FloatField(default=0.0, help_text="Sum of all metrics (max 1500).")
-    average_score = models.FloatField(default=0.0, help_text="Average score out of 100.")
+    # --- Computed Field ---
+    total_score = models.PositiveIntegerField(default=0, help_text="Sum of all 15 metrics (max 1500).")
+
     remarks = models.TextField(null=True, blank=True)
 
     # --- Audit Fields ---
@@ -118,7 +117,7 @@ class PerformanceEvaluation(models.Model):
 
     # --- Methods ---
     def calculate_total_score(self):
-        """Compute total and average scores."""
+        """Compute the total performance score."""
         metrics = [
             self.communication_skills,
             self.multitasking,
@@ -138,8 +137,7 @@ class PerformanceEvaluation(models.Model):
         ]
         total = sum(int(x or 0) for x in metrics)
         self.total_score = total
-        self.average_score = round(total / 15, 2)
-        return self.total_score
+        return total
 
     def save(self, *args, **kwargs):
         """Auto-update computed fields before saving."""
@@ -148,8 +146,8 @@ class PerformanceEvaluation(models.Model):
 
     def __str__(self):
         emp_name = (
-            f"{self.employee.user.first_name} {self.employee.user.last_name}"
+            f"{self.employee.user.first_name} {self.employee.user.last_name}".strip()
             if self.employee and hasattr(self.employee, "user")
             else "Unknown Employee"
         )
-        return f"{emp_name} - {self.evaluation_type} ({self.average_score}/100)"
+        return f"{emp_name} - {self.evaluation_type} | {self.total_score}"

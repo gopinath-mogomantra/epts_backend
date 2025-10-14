@@ -73,7 +73,6 @@ class PerformanceEvaluationSerializer(serializers.ModelSerializer):
             "year",
             "evaluation_summary",
             "total_score",
-            "average_score",
             "score_display",
             "remarks",
             "created_at",
@@ -111,8 +110,8 @@ class PerformanceEvaluationSerializer(serializers.ModelSerializer):
 # ======================================================
 class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
     """
-    Used by Admin/Manager to create or update performance records.
-    Automatically recalculates total and average scores.
+    Used by Admin/Manager/Client to create or update performance records.
+    Automatically recalculates total score.
     """
     employee = serializers.PrimaryKeyRelatedField(queryset=Employee.objects.all())
     evaluator = serializers.PrimaryKeyRelatedField(
@@ -166,14 +165,15 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        """Recalculate scores automatically on create."""
-        instance = super().create(validated_data)
+        """Auto-calculates total_score before saving."""
+        instance = PerformanceEvaluation.objects.create(**validated_data)
         instance.save()
         return instance
 
     def update(self, instance, validated_data):
-        """Recalculate scores automatically on update."""
-        instance = super().update(instance, validated_data)
+        """Recalculate total_score when updating."""
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
         instance.save()
         return instance
 

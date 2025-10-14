@@ -2,9 +2,9 @@
 # users/urls.py
 # ===============================================
 # Maps all user-related API endpoints:
-# - JWT Authentication
-# - Registration
-# - Profile
+# - JWT Authentication (login, refresh, verify)
+# - Registration (Admin-only)
+# - Profile (Self)
 # - Password Change
 # - Role List
 # - User List (Admin-only)
@@ -22,24 +22,34 @@ from .views import (
     UserListView,
 )
 
-app_name = "users"  # ✅ Recommended for namespacing in include()
+app_name = "users"  # ✅ Namespacing for better clarity
 
 urlpatterns = [
-    # 🔐 JWT Authentication
-    path("token/", ObtainTokenPairView.as_view(), name="token_obtain_pair"),
+    # ---------------------------------------------------
+    # 🔐 AUTHENTICATION ENDPOINTS
+    # ---------------------------------------------------
+    path("token/login/", ObtainTokenPairView.as_view(), name="token_obtain_pair"),
     path("token/refresh/", RefreshTokenView.as_view(), name="token_refresh"),
     path("token/verify/", TokenVerifyView.as_view(), name="token_verify"),
 
-    # 👤 Registration & Profile
-    path("register/", RegisterView.as_view(), name="user_register"),
-    path("me/", ProfileView.as_view(), name="user_profile"),
+    # ---------------------------------------------------
+    # 👤 USER MANAGEMENT
+    # ---------------------------------------------------
+    path("register/", RegisterView.as_view(), name="user_register"),      # Admin-only
+    path("profile/", ProfileView.as_view(), name="user_profile"),         # Self profile
 
-    # 🔑 Password Management
-    path("me/change-password/", ChangePasswordView.as_view(), name="change_password"),
+    # ---------------------------------------------------
+    # 🔑 PASSWORD MANAGEMENT
+    # ---------------------------------------------------
+    path("change-password/", ChangePasswordView.as_view(), name="change_password"),
 
-    # 🧩 Role List (for dropdowns in frontend)
+    # ---------------------------------------------------
+    # 🧩 ROLE LIST (Frontend dropdown helper)
+    # ---------------------------------------------------
     path("roles/", RoleListView.as_view(), name="role_list"),
 
-    # 📋 Admin-only: User List
+    # ---------------------------------------------------
+    # 📋 ADMIN-ONLY USER LIST
+    # ---------------------------------------------------
     path("list/", UserListView.as_view(), name="user_list"),
 ]
