@@ -1,8 +1,14 @@
+# ===============================================
+# employee/serializers.py
+# ===============================================
+# Serializers for Department and Employee models
+# Linked to the custom User model
+# ===============================================
+
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from .models import Department, Employee
-from users.models import Role
 
 User = get_user_model()
 
@@ -13,13 +19,13 @@ User = get_user_model()
 class DepartmentSerializer(serializers.ModelSerializer):
     """
     Serializer for creating and managing departments.
-    Ensures name uniqueness and prevents deactivation if employees exist.
+    Ensures unique name and prevents deactivation if employees exist.
     """
+
     class Meta:
         model = Department
-        fields = '__all__'
+        fields = "__all__"
         read_only_fields = ["created_at", "updated_at"]
-        ref_name = "EmployeeDepartment"
 
     def validate_name(self, value):
         """
@@ -34,7 +40,7 @@ class DepartmentSerializer(serializers.ModelSerializer):
 
     def validate_is_active(self, value):
         """
-        Prevent deactivating a department that still has active employees.
+        Prevent deactivation if active employees exist.
         """
         if self.instance and not value:
             has_employees = Employee.objects.filter(department=self.instance, status="Active").exists()
@@ -47,7 +53,9 @@ class DepartmentSerializer(serializers.ModelSerializer):
 # ✅ 2. USER SUMMARY SERIALIZER
 # ===============================================================
 class UserSummarySerializer(serializers.ModelSerializer):
-    role = serializers.StringRelatedField()
+    """
+    Read-only serializer for linked user details.
+    """
 
     class Meta:
         model = User
@@ -55,9 +63,12 @@ class UserSummarySerializer(serializers.ModelSerializer):
 
 
 # ===============================================================
-# ✅ 3. EMPLOYEE SERIALIZER (READ)
+# ✅ 3. EMPLOYEE READ SERIALIZER
 # ===============================================================
 class EmployeeSerializer(serializers.ModelSerializer):
+    """
+    Full employee details (used for GET requests).
+    """
     user = UserSummarySerializer(read_only=True)
     department = DepartmentSerializer(read_only=True)
     manager_name = serializers.ReadOnlyField()
@@ -65,8 +76,16 @@ class EmployeeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Employee
         fields = [
-            "id", "user", "department", "manager", "manager_name",
-            "role_title", "joining_date", "status", "created_at", "updated_at"
+            "id",
+            "user",
+            "department",
+            "manager",
+            "manager_name",
+            "designation",
+            "status",
+            "date_joined",
+            "created_at",
+            "updated_at",
         ]
         read_only_fields = ["created_at", "updated_at"]
 
@@ -76,20 +95,20 @@ class EmployeeSerializer(serializers.ModelSerializer):
 # ===============================================================
 class EmployeeCreateSerializer(serializers.ModelSerializer):
     """
-    Handles employee creation (Admin/Manager only).
-    Includes validation for unique email, emp_id, and valid relationships.
+    Used by Admins/Managers to create new employees.
+    Automatically creates linked User entry.
     """
 
-    # Linked CustomUser fields
+    # Linked User fields
     email = serializers.EmailField(write_only=True)
     emp_id = serializers.CharField(write_only=True)
     first_name = serializers.CharField(write_only=True)
     last_name = serializers.CharField(write_only=True)
     phone = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    role_id = serializers.PrimaryKeyRelatedField(
-        queryset=Role.objects.all(),
-        source="role",
-        write_only=True
+    role = serializers.ChoiceField(
+        choices=User.ROLE_CHOICES,
+        write_only=True,
+        help_text="Select role: Admin / Manager / Employee"
     )
     department_id = serializers.PrimaryKeyRelatedField(
         queryset=Department.objects.all(),
@@ -100,78 +119,68 @@ class EmployeeCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Employee
         fields = [
-            "id", "email", "emp_id", "first_name", "last_name",
-            "phone", "role_id", "department_id", "manager",
-            "role_title", "joining_date", "status"
+            "id",
+            "email",
+            "emp_id",
+            "first_name",
+            "last_name",
+            "phone",
+            "role",
+            "department_id",
+            "manager",
+            "designation",
+            "status",
         ]
 
-    # ==========================================================
+    # -------------------------------
     # 🔹 VALIDATION SECTION
-    # ==========================================================
-
+    # -------------------------------
     def validate_email(self, value):
-        """
-        Ensure email is unique across all users.
-        """
         if User.objects.filter(email__iexact=value).exists():
             raise serializers.ValidationError("A user with this email already exists.")
         return value
 
     def validate_emp_id(self, value):
-        """
-        Ensure employee ID is unique across all users.
-        """
         if User.objects.filter(emp_id__iexact=value).exists():
             raise serializers.ValidationError("Employee ID already exists.")
         return value
 
     def validate_manager(self, value):
-        """
-        Ensure employee is not assigned as their own manager.
-        """
         if value and self.instance and value.id == self.instance.id:
             raise serializers.ValidationError("An employee cannot be their own manager.")
         return value
 
     def validate_department(self, value):
-        """
-        Ensure department is active before assigning employees.
-        """
         if value and not value.is_active:
             raise serializers.ValidationError("Cannot assign employees to an inactive department.")
         return value
 
-    def validate_joining_date(self, value):
-        """
-        Prevent joining date in the future.
-        """
-        if value > timezone.now().date():
-            raise serializers.ValidationError("Joining date cannot be in the future.")
-        return value
+    def validate(self, attrs):
+        if "status" in attrs and attrs["status"] not in ["Active", "On Leave", "Resigned"]:
+            raise serializers.ValidationError({"status": "Invalid employee status."})
+        return attrs
 
-    # ==========================================================
+    # -------------------------------
     # 🔹 CREATE LOGIC
-    # ==========================================================
+    # -------------------------------
     def create(self, validated_data):
-        role = validated_data.pop("role", None)
         department = validated_data.pop("department", None)
         email = validated_data.pop("email")
         emp_id = validated_data.pop("emp_id")
         first_name = validated_data.pop("first_name")
         last_name = validated_data.pop("last_name")
         phone = validated_data.pop("phone", "")
+        role = validated_data.pop("role", "Employee")
 
-        # 1️⃣ Create CustomUser
+        # 1️⃣ Create linked User
         user = User.objects.create_user(
-            username=email,
             email=email,
             emp_id=emp_id,
             first_name=first_name,
             last_name=last_name,
             role=role,
+            phone=phone
         )
-        user.phone = phone
-        user.save()
 
         # 2️⃣ Create Employee record
         employee = Employee.objects.create(
@@ -184,12 +193,11 @@ class EmployeeCreateSerializer(serializers.ModelSerializer):
 
 
 # ===============================================================
-# ✅ 5. EMPLOYEE UPDATE VALIDATION (optional)
+# ✅ 5. EMPLOYEE UPDATE SERIALIZER
 # ===============================================================
 class EmployeeUpdateSerializer(serializers.ModelSerializer):
     """
-    Used for PUT/PATCH update operations.
-    Ensures department and manager validity.
+    Used for PUT/PATCH updates (Admin/Manager use).
     """
     department_id = serializers.PrimaryKeyRelatedField(
         queryset=Department.objects.all(),
@@ -199,31 +207,19 @@ class EmployeeUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Employee
-        fields = [
-            "department_id", "manager", "role_title", "status"
-        ]
+        fields = ["department_id", "manager", "designation", "status"]
 
     def validate_manager(self, value):
-        """
-        Prevent self-assignment as manager.
-        """
         if value and self.instance and value.id == self.instance.id:
             raise serializers.ValidationError("An employee cannot be their own manager.")
         return value
 
     def validate_department(self, value):
-        """
-        Ensure department is active.
-        """
         if value and not value.is_active:
             raise serializers.ValidationError("Cannot assign to an inactive department.")
         return value
 
     def validate_status(self, value):
-        """
-        Ensure valid status transition.
-        """
-        allowed_status = ["Active", "On Leave", "Resigned"]
-        if value not in allowed_status:
+        if value not in ["Active", "On Leave", "Resigned"]:
             raise serializers.ValidationError("Invalid status value.")
         return value

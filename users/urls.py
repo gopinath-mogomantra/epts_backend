@@ -1,3 +1,15 @@
+# ===============================================
+# users/urls.py
+# ===============================================
+# Maps all user-related API endpoints:
+# - JWT Authentication
+# - Registration
+# - Profile
+# - Password Change
+# - Role List
+# - User List (Admin-only)
+# ===============================================
+
 from django.urls import path
 from rest_framework_simplejwt.views import TokenVerifyView
 from .views import (
@@ -7,25 +19,27 @@ from .views import (
     ProfileView,
     ChangePasswordView,
     RoleListView,
-    UserListView,  # ✅ Add this import
+    UserListView,
 )
 
+app_name = "users"  # ✅ Recommended for namespacing in include()
+
 urlpatterns = [
-    # JWT Authentication Endpoints
-    path('token/', ObtainTokenPairView.as_view(), name='token_obtain_pair'),
-    path('token/refresh/', RefreshTokenView.as_view(), name='token_refresh'),
-    path('token/verify/', TokenVerifyView.as_view(), name='token_verify'),
+    # 🔐 JWT Authentication
+    path("token/", ObtainTokenPairView.as_view(), name="token_obtain_pair"),
+    path("token/refresh/", RefreshTokenView.as_view(), name="token_refresh"),
+    path("token/verify/", TokenVerifyView.as_view(), name="token_verify"),
 
-    # Registration and Profile
-    path('register/', RegisterView.as_view(), name='user_register'),
-    path('me/', ProfileView.as_view(), name='user_profile'),
+    # 👤 Registration & Profile
+    path("register/", RegisterView.as_view(), name="user_register"),
+    path("me/", ProfileView.as_view(), name="user_profile"),
 
-    # Change Password
-    path('me/change-password/', ChangePasswordView.as_view(), name='change_password'),
+    # 🔑 Password Management
+    path("me/change-password/", ChangePasswordView.as_view(), name="change_password"),
 
-    # Roles List (For Admin Role Management)
-    path('roles/', RoleListView.as_view(), name='role_list'),
+    # 🧩 Role List (for dropdowns in frontend)
+    path("roles/", RoleListView.as_view(), name="role_list"),
 
-    # User List (For Admin to view all users)
-    path('users/', UserListView.as_view(), name='user_list'),
+    # 📋 Admin-only: User List
+    path("list/", UserListView.as_view(), name="user_list"),
 ]

@@ -1,143 +1,165 @@
 # ===============================================
-# users/serializers.py
-# ===============================================
-# Defines:
-# - CustomTokenObtainPairSerializer (JWT login)
-# - RegisterSerializer (user signup)
-# - ChangePasswordSerializer (password update)
-# - ProfileSerializer (profile details)
+# Handles:
+# 1. JWT Token Serializer (Login)
+# 2. User Registration (auto password if missing)
+# 3. Change Password
+# 4. Profile Details
 # ===============================================
 
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
-import datetime
-from .models import CustomUser
-from rest_framework import serializers
-from django.contrib.auth.models import User
+import random
+import string
 
 User = get_user_model()
 
+
 # =====================================================
-# ✅ 1. Custom JWT Token Serializer
+# ✅ 1. Custom JWT Token Serializer (Login)
 # =====================================================
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    """
+    Extends JWT payload to include extra user details.
+    """
 
     @classmethod
     def get_token(cls, user):
         token = super().get_token(user)
-        token['email'] = user.email
-        token['role'] = getattr(user.role, 'name', None)
-        token['first_name'] = user.first_name
-        token['last_name'] = user.last_name
+        token["email"] = user.email
+        token["role"] = user.role
+        token["first_name"] = user.first_name
+        token["last_name"] = user.last_name
+        token["emp_id"] = user.emp_id
         return token
 
     def validate(self, attrs):
         data = super().validate(attrs)
-        data['user'] = {
-            'id': self.user.id,
-            'username': self.user.username,
-            'email': self.user.email,
-            'first_name': self.user.first_name,
-            'last_name': self.user.last_name,
-            'role': getattr(self.user.role, 'name', None),
+        data["user"] = {
+            "id": self.user.id,
+            "email": self.user.email,
+            "first_name": self.user.first_name,
+            "last_name": self.user.last_name,
+            "role": self.user.role,
+            "emp_id": self.user.emp_id,
         }
         return data
+
 
 # =====================================================
 # ✅ 2. User Registration Serializer
 # =====================================================
 class RegisterSerializer(serializers.ModelSerializer):
+    """
+    Used by Admins/HR to create new employees or managers.
+    Auto-generates a random secure password if none is provided.
+    """
+
     password = serializers.CharField(
-        write_only=True, required=True, validators=[validate_password]
+        write_only=True, required=False, validators=[validate_password]
     )
-    password2 = serializers.CharField(write_only=True, required=True)
-    role = serializers.PrimaryKeyRelatedField(
-        queryset=User._meta.get_field('role').remote_field.model.objects.all(),
-        required=False
-    )
-    joining_date = serializers.DateField(required=False)
+    password2 = serializers.CharField(write_only=True, required=False)
 
     class Meta:
         model = User
-        fields = (
-            'id', 'username', 'email', 'first_name', 'last_name',
-            'emp_id', 'phone', 'role', 'password', 'password2', 'joining_date'
-        )
-        read_only_fields = ('id',)
+        fields = [
+            "id",
+            "emp_id",
+            "email",
+            "first_name",
+            "last_name",
+            "department",
+            "phone",
+            "role",
+            "password",
+            "password2",
+            "joining_date",
+        ]
+        read_only_fields = ["id"]
 
     def validate(self, attrs):
-        if attrs['password'] != attrs['password2']:
-            raise serializers.ValidationError({"password": "Passwords do not match."})
+        password = attrs.get("password")
+        password2 = attrs.get("password2")
+
+        # Only check if both fields are provided
+        if password or password2:
+            if password != password2:
+                raise serializers.ValidationError(
+                    {"password": "Passwords do not match."}
+                )
         return attrs
 
-    def validate_joining_date(self, value):
-        # Convert datetime to date, if necessary
-        if isinstance(value, datetime.datetime):
-            return value.date()
-        return value
-
     def create(self, validated_data):
-        validated_data.pop('password2', None)
-        password = validated_data.pop('password')
-        role = validated_data.pop('role', None)
+        validated_data.pop("password2", None)
+        password = validated_data.pop("password", None)
 
-        user = User(**validated_data)
-        if role:
-            user.role = role
-        user.set_password(password)
-        user.save()
+        # ✅ Auto-generate random password if not provided
+        if not password:
+            password = "".join(
+                random.choices(string.ascii_letters + string.digits + "!@#$%^&*", k=10)
+            )
+
+        user = User.objects.create_user(password=password, **validated_data)
+
+        # NOTE: For production, send password to user's email here
+        # Example (future): send_email_to_user(user.email, password)
         return user
-    
 
-class UserSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = CustomUser
-        fields = [
-            'id',
-            'emp_id',
-            'first_name',
-            'last_name',
-            'email',
-            'department',
-            'role',
-            'joining_date',
-        ]
 
 # =====================================================
 # ✅ 3. Change Password Serializer
 # =====================================================
 class ChangePasswordSerializer(serializers.Serializer):
-    old_password = serializers.CharField(required=True)
-    new_password = serializers.CharField(required=True)
+    """
+    Allows any authenticated user to change their password.
+    """
+
+    old_password = serializers.CharField(write_only=True, required=True)
+    new_password = serializers.CharField(
+        write_only=True, required=True, validators=[validate_password]
+    )
 
     def validate_old_password(self, value):
-        user = self.context['request'].user
+        user = self.context["request"].user
         if not user.check_password(value):
             raise serializers.ValidationError("Old password is not correct.")
         return value
-    
-    def update(self, instance, validated_data):
-        # Update the user's password
-        instance.set_password(validated_data['new_password'])
-        instance.save()
-        return instance
 
+    def save(self, **kwargs):
+        user = self.context["request"].user
+        user.set_password(self.validated_data["new_password"])
+        user.save()
+        return user
 
-    def create(self, validated_data):
-        # Not needed but required by DRF if save() is called on new instance
-        raise NotImplementedError("This serializer cannot create new users.")
 
 # =====================================================
 # ✅ 4. Profile Serializer
 # =====================================================
 class ProfileSerializer(serializers.ModelSerializer):
-    role = serializers.StringRelatedField()  # Displays role name instead of ID
+    """
+    Read-only profile info for logged-in users.
+    """
 
     class Meta:
         model = User
-        fields = (
-            'id', 'username', 'email', 'first_name', 'last_name',
-            'emp_id', 'phone', 'role', 'joining_date', 'is_verified'
-        )
+        fields = [
+            "id",
+            "emp_id",
+            "email",
+            "first_name",
+            "last_name",
+            "role",
+            "department",
+            "phone",
+            "joining_date",
+            "is_verified",
+            "is_active",
+        ]
+        read_only_fields = [
+            "id",
+            "emp_id",
+            "email",
+            "role",
+            "joining_date",
+        ]

@@ -52,7 +52,6 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'users.middleware.RoleBasedAccessMiddleware',
 ]
 
 ROOT_URLCONF = 'epts_backend.urls'
@@ -78,14 +77,7 @@ WSGI_APPLICATION = 'epts_backend.wsgi.application'
 # -------------------------------------------------------------------
 # DATABASE CONFIGURATION (MySQL)
 # -------------------------------------------------------------------
-import dj_database_url
-
-''' DATABASES = {
-    'default': dj_database_url.config(
-        default='mysql://epts_user:Mogo@12345@106.222.230.233:3306/mogomantraepts',
-    )
-} '''
-
+'''
 import dj_database_url
 import os
 
@@ -95,12 +87,27 @@ DATABASES = {
         conn_max_age=600,
         #ssl_require=False
     )
+} '''
+
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': 'epts_project_db',       # Database name
+        'USER': 'remote_user',           # MySQL username
+        'PASSWORD': 'Mogo@12345',        # MySQL password
+        'HOST': '100.93.35.95',          # Your friend's Tailscale IP
+        'PORT': '3306',                  # MySQL default port
+        'OPTIONS': {
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'"
+        },
+    }
 }
+
 
 # -------------------------------------------------------------------
 # CUSTOM USER MODEL
 # -------------------------------------------------------------------
-AUTH_USER_MODEL = 'users.CustomUser'
+AUTH_USER_MODEL = 'users.User'
 
 # -------------------------------------------------------------------
 # PASSWORD VALIDATORS

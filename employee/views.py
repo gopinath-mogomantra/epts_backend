@@ -1,14 +1,12 @@
 # ===============================================
 # employee/views.py
 # ===============================================
-# Contains all CRUD APIs for Department and Employee.
-# Includes validation, permissions, and clean responses
-# for React frontend integration.
+# CRUD APIs for Department and Employee modules.
+# Role-based access for Admins and Managers.
 # ===============================================
 
 from rest_framework import generics, status, permissions
 from rest_framework.response import Response
-from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
@@ -18,10 +16,11 @@ from .serializers import (
     DepartmentSerializer,
     EmployeeSerializer,
     EmployeeCreateSerializer,
-    EmployeeUpdateSerializer
+    EmployeeUpdateSerializer,
 )
-from users.models import Role
-from users.serializers import UserSerializer
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
 
 
 # ============================================================
@@ -29,26 +28,30 @@ from users.serializers import UserSerializer
 # ============================================================
 class DepartmentListCreateView(generics.ListCreateAPIView):
     """
-    GET: List all departments (Admin or Manager)
+    GET: List all departments (Admin/Manager)
     POST: Create a new department (Admin only)
     """
     queryset = Department.objects.all().order_by("name")
     serializer_class = DepartmentSerializer
     filter_backends = [SearchFilter, OrderingFilter]
     search_fields = ["name", "description"]
+    permission_classes = [permissions.IsAuthenticated]
 
-    def get_permissions(self):
-        if self.request.method == "POST":
-            return [permissions.IsAuthenticated()]
-        return [permissions.IsAuthenticated()]
+    def post(self, request, *args, **kwargs):
+        # Only Admins can create new departments
+        if request.user.role != "Admin" and not request.user.is_superuser:
+            return Response(
+                {"error": "Only Admins can create departments."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
-    def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
+        department = serializer.save()
+
         return Response(
-            {"message": "Department created successfully.", "department": serializer.data},
-            status=status.HTTP_201_CREATED
+            {"message": "Department created successfully.", "department": DepartmentSerializer(department).data},
+            status=status.HTTP_201_CREATED,
         )
 
 
@@ -57,23 +60,28 @@ class DepartmentListCreateView(generics.ListCreateAPIView):
 # ============================================================
 class DepartmentDetailView(generics.RetrieveUpdateDestroyAPIView):
     """
-    Handles individual Department operations.
-    - GET: Retrieve department details
-    - PUT/PATCH: Update department
-    - DELETE: Remove department (Admin only)
+    Handles individual Department CRUD.
     """
     queryset = Department.objects.all()
     serializer_class = DepartmentSerializer
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [permissions.IsAuthenticated]
 
     def delete(self, request, *args, **kwargs):
         instance = self.get_object()
         # Prevent deletion if department has employees
         if instance.employees.exists():
             return Response(
-                {"error": "Cannot delete department with assigned employees."},
-                status=status.HTTP_400_BAD_REQUEST
+                {"error": "Cannot delete a department that has assigned employees."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
+
+        # Only Admins can delete
+        if request.user.role != "Admin" and not request.user.is_superuser:
+            return Response(
+                {"error": "Only Admins can delete departments."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         self.perform_destroy(instance)
         return Response({"message": "Department deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
 
@@ -83,47 +91,46 @@ class DepartmentDetailView(generics.RetrieveUpdateDestroyAPIView):
 # ============================================================
 class EmployeeListView(generics.ListAPIView):
     """
-    Lists all employees with filters for department, manager, and status.
-    Accessible to Admin and Manager roles.
+    Lists all employees.
+    - Admins: Can view all employees
+    - Managers: Can view only their team
     """
     queryset = Employee.objects.select_related("user", "department", "manager").all()
     serializer_class = EmployeeSerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ["department", "manager", "status"]
-    search_fields = ["user__first_name", "user__last_name", "user__emp_id", "role_title"]
-    ordering_fields = ["joining_date", "user__first_name"]
-
-    def get_permissions(self):
-        return [permissions.IsAuthenticated()]
+    search_fields = ["user__first_name", "user__last_name", "user__emp_id", "designation"]
+    ordering_fields = ["date_joined", "user__first_name"]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         user = self.request.user
+        queryset = super().get_queryset()
 
         # Managers only see their team members
-        if hasattr(user, "employee_profile") and user.role.name.upper() == "MANAGER":
-            return self.queryset.filter(manager=user.employee_profile)
-        return self.queryset
+        if user.role == "Manager":
+            return queryset.filter(manager__user=user)
+
+        return queryset
 
 
 # ============================================================
-# ✅ 4. EMPLOYEE CREATE VIEW
+# ✅ 4. EMPLOYEE CREATE VIEW (ADMIN + MANAGER)
 # ============================================================
 class EmployeeCreateView(generics.CreateAPIView):
     """
-    Creates a new Employee + CustomUser entry.
-    Accessible only by Admin or Manager.
+    Create a new Employee + User entry.
+    Accessible by Admin and Manager only.
     """
     serializer_class = EmployeeCreateSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
-        user_role = getattr(request.user.role, "name", "").upper()
-
-        # Only Admin or Manager can create employees
-        if user_role not in ["ADMIN", "MANAGER"]:
+        # Only Admins and Managers can create employees
+        if request.user.role not in ["Admin", "Manager"] and not request.user.is_superuser:
             return Response(
                 {"error": "You do not have permission to create employees."},
-                status=status.HTTP_403_FORBIDDEN
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         serializer = self.get_serializer(data=request.data)
@@ -131,11 +138,8 @@ class EmployeeCreateView(generics.CreateAPIView):
         employee = serializer.save()
 
         return Response(
-            {
-                "message": "Employee created successfully.",
-                "employee": EmployeeSerializer(employee).data
-            },
-            status=status.HTTP_201_CREATED
+            {"message": "Employee created successfully.", "employee": EmployeeSerializer(employee).data},
+            status=status.HTTP_201_CREATED,
         )
 
 
@@ -145,13 +149,22 @@ class EmployeeCreateView(generics.CreateAPIView):
 class EmployeeDetailView(generics.RetrieveUpdateDestroyAPIView):
     """
     Retrieve, update, or delete an employee.
+    Admins can modify all; Managers only their team.
     """
     queryset = Employee.objects.select_related("user", "department", "manager").all()
     serializer_class = EmployeeSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_object(self):
-        return get_object_or_404(Employee, pk=self.kwargs["pk"])
+        employee = get_object_or_404(Employee, pk=self.kwargs["pk"])
+
+        # Managers can only access their team
+        if self.request.user.role == "Manager" and employee.manager and employee.manager.user != self.request.user:
+            return Response(
+                {"error": "You do not have permission to access this employee."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return employee
 
     def get_serializer_class(self):
         if self.request.method in ["PUT", "PATCH"]:
@@ -165,17 +178,17 @@ class EmployeeDetailView(generics.RetrieveUpdateDestroyAPIView):
         serializer.save()
         return Response(
             {"message": "Employee updated successfully.", "employee": EmployeeSerializer(employee).data},
-            status=status.HTTP_200_OK
+            status=status.HTTP_200_OK,
         )
 
     def delete(self, request, *args, **kwargs):
         employee = self.get_object()
 
-        # Prevent deleting Admin or Manager users
-        if hasattr(employee.user.role, "name") and employee.user.role.name.upper() in ["ADMIN", "MANAGER"]:
+        # Prevent deletion of Admin or Manager accounts
+        if employee.user.role in ["Admin", "Manager"]:
             return Response(
                 {"error": "You cannot delete Admin or Manager accounts."},
-                status=status.HTTP_403_FORBIDDEN
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         employee.user.delete()

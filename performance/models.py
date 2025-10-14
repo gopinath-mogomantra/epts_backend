@@ -1,4 +1,10 @@
+# ===============================================
 # performance/models.py
+# ===============================================
+# Stores employee performance metrics and evaluation scores.
+# Includes evaluator type, weekly period tracking, and score computation.
+# ===============================================
+
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
@@ -6,41 +12,60 @@ from django.utils import timezone
 
 class PerformanceEvaluation(models.Model):
     """
-    Stores employee performance data (raw metrics + computed total score).
-    Used for performance tracking and ranking (Top/Weak performers).
+    Stores performance data for employees.
+    Used for employee dashboards, performance ranking, and reports.
     """
 
-    emp = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
+    employee = models.ForeignKey(
+        "employee.Employee",
         on_delete=models.CASCADE,
-        related_name='performance_evaluations'
+        related_name="performance_evaluations",
+        null=True, blank=True,
+    )
+
+    evaluator = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="submitted_evaluations",
+        help_text="The Admin/Manager/Client who gave the evaluation."
     )
 
     department = models.ForeignKey(
-        'employee.Department',
+        "employee.Department",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='performance_evaluations'
+        related_name="department_performances"
     )
 
-    manager = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='manager_performance_reviews'
-    )
-
+    # --- Evaluation Meta Info ---
     review_date = models.DateField(default=timezone.now)
     evaluation_period = models.CharField(
         max_length=120,
         blank=True,
-        default='',
-        help_text="For example: WK:10/Nov/2025 - 16/Nov/2025"
+        default="",
+        help_text="E.g., WK:10/Oct/2025 - 16/Oct/2025"
     )
 
-    # === 15 metrics (each scored 0–100) ===
+    week_number = models.PositiveSmallIntegerField(default=timezone.now().isocalendar().week)
+    year = models.PositiveSmallIntegerField(default=timezone.now().year)
+
+    EVALUATION_TYPE_CHOICES = [
+        ("Admin", "Admin"),
+        ("Manager", "Manager"),
+        ("Client", "Client"),
+        ("Self", "Self"),
+    ]
+    evaluation_type = models.CharField(
+        max_length=20,
+        choices=EVALUATION_TYPE_CHOICES,
+        default="Manager",
+        help_text="Who conducted the evaluation."
+    )
+
+    # --- Performance Metrics (0–100) ---
     communication_skills = models.PositiveSmallIntegerField(default=0)
     multitasking = models.PositiveSmallIntegerField(default=0)
     team_skills = models.PositiveSmallIntegerField(default=0)
@@ -57,23 +82,25 @@ class PerformanceEvaluation(models.Model):
     attendance = models.PositiveSmallIntegerField(default=0)
     punctuality = models.PositiveSmallIntegerField(default=0)
 
-    # Computed total score (out of 1500)
-    total_score = models.PositiveIntegerField(default=0, help_text="Sum of all 15 metrics (max 1500)")
-
+    # --- Computed Fields ---
+    total_score = models.FloatField(default=0.0, help_text="Sum of all metrics (max 1500).")
+    average_score = models.FloatField(default=0.0, help_text="Average score out of 100.")
     remarks = models.TextField(null=True, blank=True)
 
+    # --- Audit Fields ---
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # --- Meta ---
     class Meta:
-        ordering = ['-review_date', '-created_at']
-        verbose_name = 'Performance Evaluation'
-        verbose_name_plural = 'Performance Evaluations'
+        ordering = ["-review_date", "-created_at"]
+        verbose_name = "Performance Evaluation"
+        verbose_name_plural = "Performance Evaluations"
+        unique_together = ("employee", "week_number", "year", "evaluation_type")
 
+    # --- Methods ---
     def calculate_total_score(self):
-        """
-        Automatically sum all metrics to compute total score.
-        """
+        """Compute total and average scores."""
         metrics = [
             self.communication_skills,
             self.multitasking,
@@ -91,16 +118,19 @@ class PerformanceEvaluation(models.Model):
             self.attendance,
             self.punctuality,
         ]
-        return sum(int(x) for x in metrics if x is not None)
+        total = sum(int(x or 0) for x in metrics)
+        self.total_score = total
+        self.average_score = round(total / 15, 2)
+        return self.total_score
 
     def save(self, *args, **kwargs):
-        """
-        Overridden save method ensures that total_score
-        is always recalculated when data changes.
-        """
-        self.total_score = self.calculate_total_score()
+        """Auto-update computed fields before saving."""
+        self.calculate_total_score()
         super().save(*args, **kwargs)
 
     def __str__(self):
-        emp_name = getattr(self.emp, 'username', str(self.emp))
-        return f"{emp_name} - {self.review_date} - {self.total_score}/1500"
+        emp_name = (
+            f"{self.employee.user.first_name} {self.employee.user.last_name}"
+            if hasattr(self.employee, "user") else str(self.employee)
+        )
+        return f"{emp_name} - {self.evaluation_type} - {self.total_score}/1500"

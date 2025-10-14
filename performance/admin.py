@@ -1,8 +1,8 @@
 # ===============================================
 # performance/admin.py
 # ===============================================
-# Registers PerformanceEvaluation model with Django Admin.
-# Enables easy management, search, and filtering of records.
+# Admin registration for Performance Evaluation module.
+# Supports filtering, search, and inline metric management.
 # ===============================================
 
 from django.contrib import admin
@@ -13,51 +13,136 @@ from .models import PerformanceEvaluation
 class PerformanceEvaluationAdmin(admin.ModelAdmin):
     """
     Admin configuration for Performance Evaluation records.
+    Provides analytics and easy access to employee evaluations.
     """
-    # Fields displayed in the list page of the admin
+
+    # ------------------------------------------------------
+    # Fields displayed in list view
+    # ------------------------------------------------------
     list_display = (
-        'id', 'emp', 'department', 'manager', 'review_date',
-        'evaluation_period', 'total_score'
+        "id",
+        "get_emp_id",
+        "get_employee_name",
+        "department",
+        "evaluation_type",
+        "review_date",
+        "evaluation_period",
+        "total_score",
+        "average_score",
+        "evaluator",
     )
 
-    # Add quick search functionality
+    # ------------------------------------------------------
+    # Filters (right sidebar)
+    # ------------------------------------------------------
+    list_filter = (
+        "evaluation_type",
+        "department",
+        "year",
+        "week_number",
+        "review_date",
+    )
+
+    # ------------------------------------------------------
+    # Search bar
+    # ------------------------------------------------------
     search_fields = (
-        'emp__first_name', 'emp__last_name', 'emp__emp_id',
-        'department__name', 'manager__first_name', 'manager__last_name'
+        "employee__user__emp_id",
+        "employee__user__first_name",
+        "employee__user__last_name",
+        "department__name",
+        "evaluation_type",
     )
 
-    # Filters on the right sidebar for easy record grouping
-    list_filter = ('department', 'manager', 'evaluation_period')
+    # ------------------------------------------------------
+    # Read-only fields
+    # ------------------------------------------------------
+    readonly_fields = (
+        "total_score",
+        "average_score",
+        "created_at",
+        "updated_at",
+    )
 
-    # Make certain fields read-only
-    readonly_fields = ('total_score', 'created_at', 'updated_at')
+    # ------------------------------------------------------
+    # Default ordering and pagination
+    # ------------------------------------------------------
+    ordering = ("-review_date",)
+    list_per_page = 25
+    date_hierarchy = "review_date"
 
-    # Sort records by most recent review date
-    ordering = ('-review_date',)
-
-    # Customize how the model appears in the admin panel
-    list_per_page = 20
-    date_hierarchy = 'review_date'
-
-    # Field grouping inside the record form
+    # ------------------------------------------------------
+    # Fieldsets (grouping sections in detail page)
+    # ------------------------------------------------------
     fieldsets = (
-        ('Employee & Review Info', {
-            'fields': ('emp', 'department', 'manager', 'review_date', 'evaluation_period')
-        }),
-        ('Performance Metrics', {
-            'fields': (
-                'communication_skills', 'multitasking', 'team_skills', 'technical_skills',
-                'job_knowledge', 'productivity', 'creativity', 'work_quality',
-                'professionalism', 'work_consistency', 'attitude', 'cooperation',
-                'dependability', 'attendance', 'punctuality'
-            )
-        }),
-        ('Summary', {
-            'fields': ('total_score', 'remarks', 'created_at', 'updated_at')
-        }),
+        (
+            "Employee & Review Info",
+            {
+                "fields": (
+                    "employee",
+                    "evaluator",
+                    "department",
+                    "evaluation_type",
+                    "review_date",
+                    "evaluation_period",
+                    "week_number",
+                    "year",
+                )
+            },
+        ),
+        (
+            "Performance Metrics",
+            {
+                "fields": (
+                    "communication_skills",
+                    "multitasking",
+                    "team_skills",
+                    "technical_skills",
+                    "job_knowledge",
+                    "productivity",
+                    "creativity",
+                    "work_quality",
+                    "professionalism",
+                    "work_consistency",
+                    "attitude",
+                    "cooperation",
+                    "dependability",
+                    "attendance",
+                    "punctuality",
+                )
+            },
+        ),
+        (
+            "Summary",
+            {
+                "fields": (
+                    "total_score",
+                    "average_score",
+                    "remarks",
+                    "created_at",
+                    "updated_at",
+                )
+            },
+        ),
     )
 
-    # Automatically refresh total_score when saving from admin panel
+    # ------------------------------------------------------
+    # Custom column methods
+    # ------------------------------------------------------
+    def get_emp_id(self, obj):
+        """Display employee ID in list view."""
+        return getattr(obj.employee.user, "emp_id", "—")
+    get_emp_id.short_description = "Emp ID"
+
+    def get_employee_name(self, obj):
+        """Display employee full name."""
+        user = obj.employee.user
+        return f"{user.first_name} {user.last_name}".strip()
+    get_employee_name.short_description = "Employee Name"
+
+    # ------------------------------------------------------
+    # Save logic (ensures total_score auto recalculates)
+    # ------------------------------------------------------
     def save_model(self, request, obj, form, change):
-        obj.save()  # Model’s save() will recalculate total_score
+        obj.save()  # model.save() auto-updates total_score & average_score
         super().save_model(request, obj, form, change)

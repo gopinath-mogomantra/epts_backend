@@ -1,80 +1,153 @@
+# ===============================================
 # performance/views.py
+# ===============================================
+# Handles CRUD for Performance Evaluations
+# Includes summary (Top/Weak performers) and
+# dashboard endpoints for employees.
+# ===============================================
+
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from django.contrib.auth import get_user_model
+from django.db.models import Max
+from django.shortcuts import get_object_or_404
+
 from .models import PerformanceEvaluation
 from .serializers import (
     PerformanceEvaluationSerializer,
-    PerformanceCreateUpdateSerializer
+    PerformanceCreateUpdateSerializer,
+    PerformanceDashboardSerializer,
 )
+from employee.models import Employee
 
-User = get_user_model()
 
-
-# -----------------------------
-# CRUD Views
-# -----------------------------
+# ==========================================================
+# ✅ 1. LIST + CREATE VIEW
+# ==========================================================
 class PerformanceListCreateView(generics.ListCreateAPIView):
     """
     GET  -> List all employee performance evaluations
-    POST -> Create a new evaluation record
+    POST -> Create a new evaluation record (Admin/Manager)
     """
-    queryset = PerformanceEvaluation.objects.select_related('emp', 'department', 'manager').all()
+    queryset = PerformanceEvaluation.objects.select_related(
+        "employee", "evaluator", "department"
+    ).all()
     permission_classes = [permissions.IsAuthenticated]
 
     def get_serializer_class(self):
-        if self.request.method == 'POST':
+        if self.request.method == "POST":
             return PerformanceCreateUpdateSerializer
         return PerformanceEvaluationSerializer
 
+    def create(self, request, *args, **kwargs):
+        """Restrict POST access to Admin/Manager roles only."""
+        user = request.user
+        user_role = getattr(user, "role", None)
+        if str(user_role).lower() not in ["admin", "manager"]:
+            return Response(
+                {"error": "Only Admin or Manager can create evaluations."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save(evaluator=request.user)
+        return Response(
+            {
+                "message": "Performance evaluation recorded successfully.",
+                "data": PerformanceEvaluationSerializer(instance).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+# ==========================================================
+# ✅ 2. DETAIL VIEW
+# ==========================================================
 class PerformanceDetailView(generics.RetrieveAPIView):
     """
-    Retrieve a specific employee performance record.
+    Retrieve a specific performance evaluation by ID.
     """
-    queryset = PerformanceEvaluation.objects.select_related('emp', 'department', 'manager').all()
+    queryset = PerformanceEvaluation.objects.select_related(
+        "employee", "evaluator", "department"
+    ).all()
     serializer_class = PerformanceEvaluationSerializer
     permission_classes = [permissions.IsAuthenticated]
 
 
-# -----------------------------
-# Summary View (Top/Weak Performers)
-# -----------------------------
+# ==========================================================
+# ✅ 3. PERFORMANCE SUMMARY (TOP & WEAK 3)
+# ==========================================================
 class PerformanceSummaryView(APIView):
     """
-    Returns Top 3 and Weak 3 performers based on total_score.
+    Returns Top 3 and Weak 3 performers based on their latest total_score.
+    Used for Admin/Manager dashboards.
     """
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        # Get latest evaluation for each employee
-        latest_per_emp = (
-            PerformanceEvaluation.objects
-            .order_by('emp', '-review_date', '-created_at')
-            .distinct('emp')
-            .select_related('emp', 'department')
+        # Get latest evaluation per employee
+        latest_evals = (
+            PerformanceEvaluation.objects.values("employee")
+            .annotate(latest_date=Max("review_date"))
         )
 
-        # Sort by total_score
-        all_sorted = sorted(latest_per_emp, key=lambda x: x.total_score, reverse=True)
+        # Fetch the corresponding evaluation records
+        latest_records = PerformanceEvaluation.objects.filter(
+            review_date__in=[item["latest_date"] for item in latest_evals]
+        ).select_related("employee__user", "department")
 
-        # Extract Top 3 and Weak 3
-        top_3 = all_sorted[:3]
-        weak_3 = all_sorted[-3:] if len(all_sorted) > 3 else all_sorted
+        # Sort by total_score descending
+        sorted_records = sorted(latest_records, key=lambda x: x.total_score, reverse=True)
+
+        top_3 = sorted_records[:3]
+        weak_3 = sorted_records[-3:] if len(sorted_records) >= 3 else sorted_records
 
         def format_data(obj):
-            emp = obj.emp
+            user = obj.employee.user
             return {
-                "emp_id": getattr(emp, 'emp_id', emp.username),
-                "name": f"{emp.first_name} {emp.last_name}".strip(),
-                "department": getattr(obj.department, 'name', 'N/A') if obj.department else 'N/A',
+                "emp_id": getattr(user, "emp_id", None),
+                "name": f"{user.first_name} {user.last_name}".strip(),
+                "department": getattr(obj.department, "name", "N/A") if obj.department else "N/A",
                 "total_score": obj.total_score,
-                "review_date": obj.review_date
+                "average_score": obj.average_score,
+                "evaluation_type": obj.evaluation_type,
+                "review_date": obj.review_date,
             }
 
-        data = {
-            "top_performers": [format_data(e) for e in top_3],
-            "weak_performers": [format_data(e) for e in weak_3]
-        }
-        return Response(data, status=status.HTTP_200_OK)
+        return Response(
+            {
+                "top_performers": [format_data(e) for e in top_3],
+                "weak_performers": [format_data(e) for e in weak_3],
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# ==========================================================
+# ✅ 4. EMPLOYEE DASHBOARD (SELF PERFORMANCE VIEW)
+# ==========================================================
+class EmployeeDashboardView(APIView):
+    """
+    Shows logged-in employee’s own performance history.
+    Displays evaluation type, total score, remarks, etc.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        try:
+            employee = Employee.objects.get(user=user)
+        except Employee.DoesNotExist:
+            return Response(
+                {"error": "Employee profile not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        evaluations = (
+            PerformanceEvaluation.objects.filter(employee=employee)
+            .order_by("-review_date")
+        )
+
+        serializer = PerformanceDashboardSerializer(evaluations, many=True)
+        return Response({"evaluations": serializer.data}, status=status.HTTP_200_OK)

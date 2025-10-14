@@ -1,58 +1,85 @@
+# ===============================================
 # performance/serializers.py
+# ===============================================
+# Serializers for Performance Evaluation CRUD,
+# dashboard views, and reporting.
+# ===============================================
+
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from .models import PerformanceEvaluation
-from employee.models import Department
+from employee.models import Department, Employee
 
 User = get_user_model()
 
 
-# ----------------------------
-# Nested Serializers (for display)
-# ----------------------------
-class DepartmentSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Department
-        fields = '__all__'
-        ref_name = 'PerformanceDepartment'
-
-
+# ======================================================
+# ✅ 1. Nested / Related Serializers
+# ======================================================
 class SimpleUserSerializer(serializers.ModelSerializer):
+    """Minimal representation of a user (for evaluator info)."""
     class Meta:
         model = User
-        fields = ['id', 'emp_id', 'first_name', 'last_name', 'email']
+        fields = ["id", "emp_id", "first_name", "last_name", "email"]
 
 
-# ----------------------------
-# Main Performance Serializer
-# ----------------------------
+class SimpleDepartmentSerializer(serializers.ModelSerializer):
+    """Minimal representation of department."""
+    class Meta:
+        model = Department
+        fields = ["id", "name"]
+
+
+class SimpleEmployeeSerializer(serializers.ModelSerializer):
+    """Employee info (linked to CustomUser)."""
+    user = SimpleUserSerializer(read_only=True)
+
+    class Meta:
+        model = Employee
+        fields = ["id", "user", "role_title", "status"]
+
+
+# ======================================================
+# ✅ 2. Full Performance Evaluation Serializer (GET)
+# ======================================================
 class PerformanceEvaluationSerializer(serializers.ModelSerializer):
-    emp = SimpleUserSerializer(read_only=True)
-    manager = SimpleUserSerializer(read_only=True)
-    department = DepartmentSerializer(read_only=True)
+    """
+    Used for retrieving performance evaluations (Admin/Manager views).
+    """
+    employee = SimpleEmployeeSerializer(read_only=True)
+    evaluator = SimpleUserSerializer(read_only=True)
+    department = SimpleDepartmentSerializer(read_only=True)
     evaluation_summary = serializers.SerializerMethodField()
+    score_display = serializers.SerializerMethodField()
 
     class Meta:
         model = PerformanceEvaluation
         fields = [
-            'id', 'emp', 'department', 'manager',
-            'review_date', 'evaluation_period',
-            'evaluation_summary', 'total_score', 'remarks',
-            'created_at', 'updated_at',
-            'communication_skills', 'multitasking', 'team_skills',
-            'technical_skills', 'job_knowledge', 'productivity',
-            'creativity', 'work_quality', 'professionalism',
-            'work_consistency', 'attitude', 'cooperation',
-            'dependability', 'attendance', 'punctuality',
+            "id",
+            "employee",
+            "evaluator",
+            "department",
+            "evaluation_type",
+            "review_date",
+            "evaluation_period",
+            "week_number",
+            "year",
+            "evaluation_summary",
+            "total_score",
+            "average_score",
+            "score_display",
+            "remarks",
+            "created_at",
+            "updated_at",
         ]
 
     def get_evaluation_summary(self, obj):
         """
-        Return structured summary of each metric for the frontend dashboard.
+        Returns detailed metric scores for frontend display.
         """
         metrics = [
             ("Communication Skills", obj.communication_skills),
-            ("Multi-tasking Abilities", obj.multitasking),
+            ("Multitasking", obj.multitasking),
             ("Team Skills", obj.team_skills),
             ("Technical Skills", obj.technical_skills),
             ("Job Knowledge", obj.job_knowledge),
@@ -67,42 +94,115 @@ class PerformanceEvaluationSerializer(serializers.ModelSerializer):
             ("Attendance", obj.attendance),
             ("Punctuality", obj.punctuality),
         ]
-        return [{"measurement": name, "score": score} for name, score in metrics]
+        return [{"metric": name, "score": score} for name, score in metrics]
+
+    def get_score_display(self, obj):
+        return f"{obj.total_score} / 1500"
 
 
-# ----------------------------
-# Serializer for POST/PUT
-# ----------------------------
+# ======================================================
+# ✅ 3. Create/Update Serializer (POST/PUT)
+# ======================================================
 class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
-    emp = serializers.PrimaryKeyRelatedField(queryset=User.objects.all())
-    manager = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), required=False, allow_null=True)
-    department = serializers.PrimaryKeyRelatedField(queryset=Department.objects.all(), required=False, allow_null=True)
+    """
+    Used by Admin/Manager to create or update performance records.
+    Automatically recalculates total and average scores.
+    """
+    employee = serializers.PrimaryKeyRelatedField(queryset=Employee.objects.all())
+    evaluator = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(), required=False, allow_null=True
+    )
+    department = serializers.PrimaryKeyRelatedField(
+        queryset=Department.objects.all(), required=False, allow_null=True
+    )
 
     class Meta:
         model = PerformanceEvaluation
         fields = [
-            'id', 'emp', 'department', 'manager',
-            'review_date', 'evaluation_period',
-            'communication_skills', 'multitasking', 'team_skills',
-            'technical_skills', 'job_knowledge', 'productivity',
-            'creativity', 'work_quality', 'professionalism',
-            'work_consistency', 'attitude', 'cooperation',
-            'dependability', 'attendance', 'punctuality',
-            'remarks'
+            "id",
+            "employee",
+            "evaluator",
+            "department",
+            "evaluation_type",
+            "review_date",
+            "evaluation_period",
+            "communication_skills",
+            "multitasking",
+            "team_skills",
+            "technical_skills",
+            "job_knowledge",
+            "productivity",
+            "creativity",
+            "work_quality",
+            "professionalism",
+            "work_consistency",
+            "attitude",
+            "cooperation",
+            "dependability",
+            "attendance",
+            "punctuality",
+            "remarks",
         ]
 
     def validate(self, data):
         """
-        Ensure all scores are between 0 and 100.
+        Ensures each score is between 0–100.
         """
         metric_fields = [
-            'communication_skills', 'multitasking', 'team_skills', 'technical_skills',
-            'job_knowledge', 'productivity', 'creativity', 'work_quality',
-            'professionalism', 'work_consistency', 'attitude', 'cooperation',
-            'dependability', 'attendance', 'punctuality'
+            "communication_skills", "multitasking", "team_skills",
+            "technical_skills", "job_knowledge", "productivity",
+            "creativity", "work_quality", "professionalism",
+            "work_consistency", "attitude", "cooperation",
+            "dependability", "attendance", "punctuality",
         ]
         for field in metric_fields:
             value = data.get(field, 0)
             if not (0 <= int(value) <= 100):
                 raise serializers.ValidationError({field: "Score must be between 0 and 100."})
         return data
+
+    def create(self, validated_data):
+        instance = super().create(validated_data)
+        instance.save()  # triggers total/average auto-calc
+        return instance
+
+    def update(self, instance, validated_data):
+        instance = super().update(instance, validated_data)
+        instance.save()  # triggers total/average auto-calc
+        return instance
+
+
+# ======================================================
+# ✅ 4. Employee Dashboard Serializer (For Self View)
+# ======================================================
+class PerformanceDashboardSerializer(serializers.ModelSerializer):
+    """
+    Simplified serializer for employee self-dashboard.
+    """
+    emp_id = serializers.SerializerMethodField()
+    employee_name = serializers.SerializerMethodField()
+    score_display = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PerformanceEvaluation
+        fields = [
+            "id",
+            "emp_id",
+            "employee_name",
+            "review_date",
+            "evaluation_period",
+            "evaluation_type",
+            "total_score",
+            "score_display",
+            "remarks",
+        ]
+
+    def get_emp_id(self, obj):
+        return getattr(obj.employee.user, "emp_id", None)
+
+    def get_employee_name(self, obj):
+        user = obj.employee.user
+        return f"{user.first_name} {user.last_name}".strip()
+
+    def get_score_display(self, obj):
+        return f"{obj.total_score} / 1500"
