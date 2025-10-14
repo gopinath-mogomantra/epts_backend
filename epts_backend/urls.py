@@ -6,6 +6,7 @@ from drf_yasg import openapi
 from rest_framework import permissions
 from django.conf import settings
 from django.conf.urls.static import static
+from .views import home
 
 # ✅ Define the home view BEFORE urlpatterns
 def home(request):
@@ -27,7 +28,7 @@ schema_view = get_schema_view(
 
 urlpatterns = [
     # ✅ Root URL returns the HTML UI
-    path('', home),
+    path("", home, name="home"),
 
     # Admin panel
     path('admin/', admin.site.urls),
