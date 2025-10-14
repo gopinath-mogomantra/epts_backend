@@ -6,6 +6,7 @@
 # ===============================================
 
 from django.contrib import admin
+from django.utils.html import format_html
 from .models import PerformanceEvaluation
 
 
@@ -27,7 +28,7 @@ class PerformanceEvaluationAdmin(admin.ModelAdmin):
         "evaluation_type",
         "review_date",
         "evaluation_period",
-        "total_score",
+        "colored_total_score",
         "average_score",
         "evaluator",
     )
@@ -131,14 +132,30 @@ class PerformanceEvaluationAdmin(admin.ModelAdmin):
     # ------------------------------------------------------
     def get_emp_id(self, obj):
         """Display employee ID in list view."""
-        return getattr(obj.employee.user, "emp_id", "—")
+        try:
+            return obj.employee.user.emp_id
+        except AttributeError:
+            return "—"
     get_emp_id.short_description = "Emp ID"
 
     def get_employee_name(self, obj):
         """Display employee full name."""
-        user = obj.employee.user
-        return f"{user.first_name} {user.last_name}".strip()
+        try:
+            user = obj.employee.user
+            return f"{user.first_name} {user.last_name}".strip() or "—"
+        except AttributeError:
+            return "—"
     get_employee_name.short_description = "Employee Name"
+
+    def colored_total_score(self, obj):
+        """Color-code total score for visual clarity."""
+        color = "green"
+        if obj.average_score < 50:
+            color = "red"
+        elif 50 <= obj.average_score < 75:
+            color = "orange"
+        return format_html(f"<b><span style='color:{color}'>{obj.total_score}</span></b>")
+    colored_total_score.short_description = "Total Score"
 
     # ------------------------------------------------------
     # Save logic (ensures total_score auto recalculates)
@@ -146,3 +163,11 @@ class PerformanceEvaluationAdmin(admin.ModelAdmin):
     def save_model(self, request, obj, form, change):
         obj.save()  # model.save() auto-updates total_score & average_score
         super().save_model(request, obj, form, change)
+
+    # ------------------------------------------------------
+    # Optimization: reduce DB hits in list view
+    # ------------------------------------------------------
+    def get_queryset(self, request):
+        """Use select_related to optimize employee/department lookups."""
+        qs = super().get_queryset(request)
+        return qs.select_related("employee__user", "department", "evaluator")

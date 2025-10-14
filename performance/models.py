@@ -10,6 +10,22 @@ from django.conf import settings
 from django.utils import timezone
 
 
+# =====================================================
+# ✅ Helper Functions (Fix for Lambda Serialization)
+# =====================================================
+def current_week_number():
+    """Return the current ISO week number."""
+    return timezone.now().isocalendar()[1]
+
+
+def current_year():
+    """Return the current year."""
+    return timezone.now().year
+
+
+# =====================================================
+# ✅ PERFORMANCE EVALUATION MODEL
+# =====================================================
 class PerformanceEvaluation(models.Model):
     """
     Stores performance data for employees.
@@ -20,7 +36,8 @@ class PerformanceEvaluation(models.Model):
         "employee.Employee",
         on_delete=models.CASCADE,
         related_name="performance_evaluations",
-        null=True, blank=True,
+        null=True,
+        blank=True,
     )
 
     evaluator = models.ForeignKey(
@@ -29,7 +46,7 @@ class PerformanceEvaluation(models.Model):
         null=True,
         blank=True,
         related_name="submitted_evaluations",
-        help_text="The Admin/Manager/Client who gave the evaluation."
+        help_text="The Admin/Manager/Client who gave the evaluation.",
     )
 
     department = models.ForeignKey(
@@ -37,7 +54,7 @@ class PerformanceEvaluation(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name="department_performances"
+        related_name="department_performances",
     )
 
     # --- Evaluation Meta Info ---
@@ -46,11 +63,12 @@ class PerformanceEvaluation(models.Model):
         max_length=120,
         blank=True,
         default="",
-        help_text="E.g., WK:10/Oct/2025 - 16/Oct/2025"
+        help_text="E.g., WK:10/Oct/2025 - 16/Oct/2025",
     )
 
-    week_number = models.PositiveSmallIntegerField(default=timezone.now().isocalendar().week)
-    year = models.PositiveSmallIntegerField(default=timezone.now().year)
+    # ✅ Fixed: use named callables for Django migration compatibility
+    week_number = models.PositiveSmallIntegerField(default=current_week_number)
+    year = models.PositiveSmallIntegerField(default=current_year)
 
     EVALUATION_TYPE_CHOICES = [
         ("Admin", "Admin"),
@@ -62,7 +80,7 @@ class PerformanceEvaluation(models.Model):
         max_length=20,
         choices=EVALUATION_TYPE_CHOICES,
         default="Manager",
-        help_text="Who conducted the evaluation."
+        help_text="Who conducted the evaluation.",
     )
 
     # --- Performance Metrics (0–100) ---
@@ -131,6 +149,7 @@ class PerformanceEvaluation(models.Model):
     def __str__(self):
         emp_name = (
             f"{self.employee.user.first_name} {self.employee.user.last_name}"
-            if hasattr(self.employee, "user") else str(self.employee)
+            if self.employee and hasattr(self.employee, "user")
+            else "Unknown Employee"
         )
-        return f"{emp_name} - {self.evaluation_type} - {self.total_score}/1500"
+        return f"{emp_name} - {self.evaluation_type} ({self.average_score}/100)"

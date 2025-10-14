@@ -1,7 +1,8 @@
 # ===============================================
 # employee/admin.py
 # ===============================================
-# Django Admin configuration for Employee model
+# Django Admin configuration for Employee & Department
+# Linked with the custom User model
 # ===============================================
 
 from django.contrib import admin
@@ -21,6 +22,12 @@ class DepartmentAdmin(admin.ModelAdmin):
     search_fields = ("name", "description")
     ordering = ("name",)
     list_per_page = 25
+    readonly_fields = ("created_at", "updated_at")
+
+    fieldsets = (
+        (None, {"fields": ("name", "description", "is_active")}),
+        ("Timestamps", {"fields": ("created_at", "updated_at")}),
+    )
 
 
 # =====================================================
@@ -61,6 +68,20 @@ class EmployeeAdmin(admin.ModelAdmin):
     readonly_fields = ("created_at", "updated_at")
     list_per_page = 25
 
+    fieldsets = (
+        ("Employee Details", {
+            "fields": (
+                "user",
+                "department",
+                "manager",
+                "designation",
+                "status",
+                "date_joined",
+            )
+        }),
+        ("Timestamps", {"fields": ("created_at", "updated_at")}),
+    )
+
     # ------------------------------
     # ✅ Custom display methods
     # ------------------------------
@@ -79,3 +100,7 @@ class EmployeeAdmin(admin.ModelAdmin):
     def get_role(self, obj):
         return obj.user.role
     get_role.short_description = "Role"
+
+    # ✅ Optimize queryset (reduce DB hits)
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related("user", "department", "manager")

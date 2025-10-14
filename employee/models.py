@@ -1,8 +1,8 @@
 # ===============================================
 # employee/models.py
 # ===============================================
-# Employee & Department models
-# Linked cleanly with your new custom User model
+# Basic setup for Employee & Department models
+# Linked with your custom User model.
 # ===============================================
 
 from django.db import models
@@ -39,8 +39,8 @@ class Department(models.Model):
 # =====================================================
 class Employee(models.Model):
     """
-    Extends User model with HR-related metadata.
-    Links to Department and optionally to a Manager (another Employee).
+    Extends the User model with department and manager details.
+    Basic HR profile for each employee.
     """
     user = models.OneToOneField(
         User,
@@ -56,7 +56,7 @@ class Employee(models.Model):
         related_name="employees"
     )
 
-    # Manager is another Employee instance (nullable)
+    # Optional: manager is another employee
     manager = models.ForeignKey(
         "self",
         on_delete=models.SET_NULL,

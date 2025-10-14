@@ -18,6 +18,7 @@ User = get_user_model()
 # ======================================================
 class SimpleUserSerializer(serializers.ModelSerializer):
     """Minimal representation of a user (for evaluator info)."""
+
     class Meta:
         model = User
         fields = ["id", "emp_id", "first_name", "last_name", "email"]
@@ -25,6 +26,7 @@ class SimpleUserSerializer(serializers.ModelSerializer):
 
 class SimpleDepartmentSerializer(serializers.ModelSerializer):
     """Minimal representation of department."""
+
     class Meta:
         model = Department
         fields = ["id", "name"]
@@ -33,10 +35,15 @@ class SimpleDepartmentSerializer(serializers.ModelSerializer):
 class SimpleEmployeeSerializer(serializers.ModelSerializer):
     """Employee info (linked to CustomUser)."""
     user = SimpleUserSerializer(read_only=True)
+    role = serializers.SerializerMethodField()
 
     class Meta:
         model = Employee
-        fields = ["id", "user", "role_title", "status"]
+        fields = ["id", "user", "designation", "status", "role"]
+
+    def get_role(self, obj):
+        """Fetch user.role from linked User model."""
+        return obj.user.role if obj.user else None
 
 
 # ======================================================
@@ -74,9 +81,7 @@ class PerformanceEvaluationSerializer(serializers.ModelSerializer):
         ]
 
     def get_evaluation_summary(self, obj):
-        """
-        Returns detailed metric scores for frontend display.
-        """
+        """Return detailed metric scores for frontend display."""
         metrics = [
             ("Communication Skills", obj.communication_skills),
             ("Multitasking", obj.multitasking),
@@ -97,6 +102,7 @@ class PerformanceEvaluationSerializer(serializers.ModelSerializer):
         return [{"metric": name, "score": score} for name, score in metrics]
 
     def get_score_display(self, obj):
+        """Readable score format."""
         return f"{obj.total_score} / 1500"
 
 
@@ -145,9 +151,7 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, data):
-        """
-        Ensures each score is between 0–100.
-        """
+        """Ensures each metric score is between 0–100."""
         metric_fields = [
             "communication_skills", "multitasking", "team_skills",
             "technical_skills", "job_knowledge", "productivity",
@@ -162,13 +166,15 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
+        """Recalculate scores automatically on create."""
         instance = super().create(validated_data)
-        instance.save()  # triggers total/average auto-calc
+        instance.save()
         return instance
 
     def update(self, instance, validated_data):
+        """Recalculate scores automatically on update."""
         instance = super().update(instance, validated_data)
-        instance.save()  # triggers total/average auto-calc
+        instance.save()
         return instance
 
 

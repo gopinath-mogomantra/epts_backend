@@ -32,3 +32,4 @@ urlpatterns = [
     # ------------------------------------------------------
     path("dashboard/", EmployeeDashboardView.as_view(), name="employee-dashboard"),
 ]
+

@@ -21,12 +21,12 @@ class UserAdmin(BaseUserAdmin):
     # ✅ Fields visible in the list page
     list_display = (
         "id",
-        "email",
         "emp_id",
+        "email",
         "first_name",
         "last_name",
         "role",
-        "department",
+        "get_department",
         "is_active",
         "is_verified",
         "is_staff",
@@ -55,28 +55,34 @@ class UserAdmin(BaseUserAdmin):
     # ✅ Field grouping for edit form
     fieldsets = (
         (_("Login Info"), {"fields": ("email", "password")}),
-        (_("Personal Info"), {
-            "fields": (
-                "emp_id",
-                "first_name",
-                "last_name",
-                "phone",
-                "department",
-                "joining_date",
-            )
-        }),
-        (_("Role & Access"), {
-            "fields": (
-                "role",
-                "is_verified",
-                "is_active",
-                "is_staff",
-                "is_superuser",
-                "groups",
-                "user_permissions",
-            )
-        }),
-        (_("Important Dates"), {"fields": ("last_login", "date_joined")}),
+        (
+            _("Personal Info"),
+            {
+                "fields": (
+                    "emp_id",
+                    "first_name",
+                    "last_name",
+                    "phone",
+                    "department",
+                    "joining_date",
+                )
+            },
+        ),
+        (
+            _("Role & Access"),
+            {
+                "fields": (
+                    "role",
+                    "is_verified",
+                    "is_active",
+                    "is_staff",
+                    "is_superuser",
+                    "groups",
+                    "user_permissions",
+                )
+            },
+        ),
+        (_("Important Dates"), {"fields": ("last_login", "date_joined", "created_at", "updated_at")}),
     )
 
     # ✅ Add-user form (Create user from Admin)
@@ -92,10 +98,22 @@ class UserAdmin(BaseUserAdmin):
                     "last_name",
                     "role",
                     "department",
-                    "password1",
-                    "password2",
+                    "password",
                     "is_active",
                 ),
             },
         ),
     )
+
+    # ✅ Read-only system fields
+    readonly_fields = ("created_at", "updated_at")
+
+    # ✅ Display department name safely
+    def get_department(self, obj):
+        return obj.department.name if obj.department else "-"
+    get_department.short_description = "Department"
+
+    # ✅ Optimize queryset to prefetch related data
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        return qs.select_related("department")
