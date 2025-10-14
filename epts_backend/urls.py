@@ -34,7 +34,8 @@ urlpatterns = [
 
     # Admin panel
     path('admin/', admin.site.urls),
- 
+
+    # API modules  
     path('api/employee/', include('employee.urls')),
     path('api/performance/', include('performance.urls')),
 
