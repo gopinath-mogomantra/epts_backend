@@ -120,3 +120,4 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def is_employee(self):
         return self.role == "Employee"
+    
