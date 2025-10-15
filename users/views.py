@@ -34,7 +34,7 @@ User = get_user_model()
 class ObtainTokenPairView(TokenObtainPairView):
     """
     Authenticates users using username/password and returns JWT tokens
-    along with role and employee info.
+    along with role and employee info for the frontend.
     """
     permission_classes = (AllowAny,)
     serializer_class = CustomTokenObtainPairSerializer
@@ -56,17 +56,17 @@ class RefreshTokenView(TokenRefreshView):
 class RegisterView(generics.CreateAPIView):
     """
     Allows Admin or Superuser to register new users.
-    Automatically creates a user with optional password.
+    Automatically assigns default joining date if not provided.
     """
     queryset = User.objects.all()
-    permission_classes = [IsAuthenticated]
     serializer_class = RegisterSerializer
+    permission_classes = [IsAuthenticated]
 
     def create(self, request, *args, **kwargs):
-        current_user = request.user
+        user = request.user
 
-        # Restrict to Admins or Superusers only
-        if not (current_user.is_superuser or getattr(current_user, "role", None) == "Admin"):
+        # Restrict access
+        if not (user.is_superuser or getattr(user, "role", None) == "Admin"):
             return Response(
                 {"error": "Only Admins or Superusers can create new users."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -76,7 +76,7 @@ class RegisterView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         new_user = serializer.save()
 
-        # Auto-generate Employee joining date if not provided
+        # Auto-assign joining_date if missing
         if not getattr(new_user, "joining_date", None):
             new_user.joining_date = timezone.now().date()
             new_user.save(update_fields=["joining_date"])
@@ -91,7 +91,7 @@ class RegisterView(generics.CreateAPIView):
 
 
 # =====================================================
-# ✅ 4. USER PROFILE API
+# ✅ 4. USER PROFILE API (Self)
 # =====================================================
 class ProfileView(APIView):
     """
@@ -102,7 +102,10 @@ class ProfileView(APIView):
     def get(self, request):
         user = request.user
         if not user.is_active:
-            return Response({"error": "Your account is inactive."}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"error": "Your account is inactive."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         serializer = ProfileSerializer(user)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -110,21 +113,33 @@ class ProfileView(APIView):
 # =====================================================
 # ✅ 5. CHANGE PASSWORD API
 # =====================================================
-class ChangePasswordView(generics.UpdateAPIView):
+class ChangePasswordView(APIView):
     """
     Allows authenticated users to change their password.
     """
     permission_classes = [IsAuthenticated]
     serializer_class = ChangePasswordSerializer
 
-    def get_object(self):
-        return self.request.user
-
-    def update(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data, context={'request': request})
+    def put(self, request, *args, **kwargs):
+        serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
-        serializer.save()
-        return Response({"message": "🔐 Password updated successfully."}, status=status.HTTP_200_OK)
+        user = request.user
+
+        old_password = serializer.validated_data["old_password"]
+        new_password = serializer.validated_data["new_password"]
+
+        if not user.check_password(old_password):
+            return Response(
+                {"error": "Old password is incorrect."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user.set_password(new_password)
+        user.save()
+        return Response(
+            {"message": "🔐 Password updated successfully."},
+            status=status.HTTP_200_OK,
+        )
 
 
 # =====================================================
@@ -133,9 +148,9 @@ class ChangePasswordView(generics.UpdateAPIView):
 class RoleListView(APIView):
     """
     Returns the list of available roles.
-    (Useful for frontend dropdowns in user creation forms.)
+    Useful for frontend dropdowns in user registration forms.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
 
     def get(self, request):
         roles = ["Admin", "Manager", "Employee"]
@@ -154,8 +169,13 @@ class UserListView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
 
     def list(self, request, *args, **kwargs):
+        user = request.user
+
         # Restrict to Admins or Superusers
-        if not (request.user.is_superuser or getattr(request.user, "role", None) == "Admin"):
-            return Response({"error": "Access denied. Admins only."}, status=status.HTTP_403_FORBIDDEN)
+        if not (user.is_superuser or getattr(user, "role", None) == "Admin"):
+            return Response(
+                {"error": "Access denied. Admins only."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         return super().list(request, *args, **kwargs)
