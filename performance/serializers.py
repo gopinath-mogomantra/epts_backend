@@ -1,11 +1,9 @@
 # ===============================================
-# performance/serializers.py
-# ===============================================
-# Serializers for Performance Evaluation CRUD,
-# dashboard views, and reporting.
+# performance/serializers.py (Final Polished Version)
 # ===============================================
 
 from rest_framework import serializers
+from django.utils import timezone
 from django.contrib.auth import get_user_model
 from .models import PerformanceEvaluation
 from employee.models import Department, Employee
@@ -17,47 +15,52 @@ User = get_user_model()
 # ✅ 1. Nested / Related Serializers
 # ======================================================
 class SimpleUserSerializer(serializers.ModelSerializer):
-    """Minimal representation of a user (for evaluator info)."""
+    full_name = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ["id", "emp_id", "first_name", "last_name", "email"]
+        fields = ["id", "emp_id", "first_name", "last_name", "full_name", "email"]
+
+    def get_full_name(self, obj):
+        return f"{obj.first_name} {obj.last_name}".strip()
 
 
 class SimpleDepartmentSerializer(serializers.ModelSerializer):
-    """Minimal representation of department."""
-
     class Meta:
         model = Department
         fields = ["id", "name"]
 
 
 class SimpleEmployeeSerializer(serializers.ModelSerializer):
-    """Employee info (linked to CustomUser)."""
     user = SimpleUserSerializer(read_only=True)
     role = serializers.SerializerMethodField()
+    manager_name = serializers.SerializerMethodField()
+    department_name = serializers.CharField(source="department.name", read_only=True)
 
     class Meta:
         model = Employee
-        fields = ["id", "user", "designation", "status", "role"]
+        fields = ["id", "user", "designation", "status", "role", "manager_name", "department_name"]
 
     def get_role(self, obj):
-        """Fetch user.role from linked User model."""
         return obj.user.role if obj.user else None
+
+    def get_manager_name(self, obj):
+        if obj.manager and obj.manager.user:
+            m = obj.manager.user
+            return f"{m.first_name} {m.last_name}".strip()
+        return None
 
 
 # ======================================================
 # ✅ 2. Full Performance Evaluation Serializer (GET)
 # ======================================================
 class PerformanceEvaluationSerializer(serializers.ModelSerializer):
-    """
-    Used for retrieving performance evaluations (Admin/Manager views).
-    """
     employee = SimpleEmployeeSerializer(read_only=True)
     evaluator = SimpleUserSerializer(read_only=True)
     department = SimpleDepartmentSerializer(read_only=True)
     evaluation_summary = serializers.SerializerMethodField()
     score_display = serializers.SerializerMethodField()
+    week_label = serializers.SerializerMethodField()
 
     class Meta:
         model = PerformanceEvaluation
@@ -71,8 +74,11 @@ class PerformanceEvaluationSerializer(serializers.ModelSerializer):
             "evaluation_period",
             "week_number",
             "year",
+            "week_label",
             "evaluation_summary",
             "total_score",
+            "average_score",
+            "rank",
             "score_display",
             "remarks",
             "created_at",
@@ -80,7 +86,6 @@ class PerformanceEvaluationSerializer(serializers.ModelSerializer):
         ]
 
     def get_evaluation_summary(self, obj):
-        """Return detailed metric scores for frontend display."""
         metrics = [
             ("Communication Skills", obj.communication_skills),
             ("Multitasking", obj.multitasking),
@@ -98,21 +103,19 @@ class PerformanceEvaluationSerializer(serializers.ModelSerializer):
             ("Attendance", obj.attendance),
             ("Punctuality", obj.punctuality),
         ]
-        return [{"metric": name, "score": score} for name, score in metrics]
+        return [{"metric": n, "score": s} for n, s in metrics]
 
     def get_score_display(self, obj):
-        """Readable score format."""
-        return f"{obj.total_score} / 1500"
+        return f"{obj.total_score} / 1500 ({obj.average_score}%)"
+
+    def get_week_label(self, obj):
+        return f"Week {obj.week_number}, {obj.year}"
 
 
 # ======================================================
-# ✅ 3. Create/Update Serializer (POST/PUT)
+# ✅ 3. Create / Update Serializer (POST / PUT)
 # ======================================================
 class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
-    """
-    Used by Admin/Manager/Client to create or update performance records.
-    Automatically recalculates total score.
-    """
     employee = serializers.PrimaryKeyRelatedField(queryset=Employee.objects.all())
     evaluator = serializers.PrimaryKeyRelatedField(
         queryset=User.objects.all(), required=False, allow_null=True
@@ -150,7 +153,6 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, data):
-        """Ensures each metric score is between 0–100."""
         metric_fields = [
             "communication_skills", "multitasking", "team_skills",
             "technical_skills", "job_knowledge", "productivity",
@@ -165,13 +167,18 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        """Auto-calculates total_score before saving."""
+        emp = validated_data["employee"]
+        week = validated_data.get("week_number") or timezone.now().isocalendar()[1]
+        year = validated_data.get("year") or timezone.now().year
+        if PerformanceEvaluation.objects.filter(
+            employee=emp, week_number=week, year=year, evaluation_type=validated_data.get("evaluation_type")
+        ).exists():
+            raise serializers.ValidationError("Performance for this week and evaluator type already exists.")
         instance = PerformanceEvaluation.objects.create(**validated_data)
         instance.save()
         return instance
 
     def update(self, instance, validated_data):
-        """Recalculate total_score when updating."""
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
@@ -179,14 +186,13 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
 
 
 # ======================================================
-# ✅ 4. Employee Dashboard Serializer (For Self View)
+# ✅ 4. Dashboard / Summary Serializer
 # ======================================================
 class PerformanceDashboardSerializer(serializers.ModelSerializer):
-    """
-    Simplified serializer for employee self-dashboard.
-    """
     emp_id = serializers.SerializerMethodField()
     employee_name = serializers.SerializerMethodField()
+    manager_name = serializers.SerializerMethodField()
+    department_name = serializers.CharField(source="department.name", read_only=True)
     score_display = serializers.SerializerMethodField()
 
     class Meta:
@@ -195,10 +201,14 @@ class PerformanceDashboardSerializer(serializers.ModelSerializer):
             "id",
             "emp_id",
             "employee_name",
+            "manager_name",
+            "department_name",
             "review_date",
             "evaluation_period",
             "evaluation_type",
             "total_score",
+            "average_score",
+            "rank",
             "score_display",
             "remarks",
         ]
@@ -207,8 +217,14 @@ class PerformanceDashboardSerializer(serializers.ModelSerializer):
         return getattr(obj.employee.user, "emp_id", None)
 
     def get_employee_name(self, obj):
-        user = obj.employee.user
-        return f"{user.first_name} {user.last_name}".strip()
+        u = obj.employee.user
+        return f"{u.first_name} {u.last_name}".strip()
+
+    def get_manager_name(self, obj):
+        if obj.employee.manager and obj.employee.manager.user:
+            m = obj.employee.manager.user
+            return f"{m.first_name} {m.last_name}".strip()
+        return "-"
 
     def get_score_display(self, obj):
-        return f"{obj.total_score} / 1500"
+        return f"{obj.total_score} / 1500 ({obj.average_score}%)"

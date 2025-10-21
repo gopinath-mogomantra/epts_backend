@@ -1,16 +1,16 @@
 # ===============================================
 # employee/models.py
 # ===============================================
-# Models: Department & Employee
-# Integrated with the custom User model (username-based login)
+# Final Updated Version — Aligned with Section 2.2.1 (Employee Details)
+# Includes minor best practices, constraints, and validation improvements
 # ===============================================
 
 from django.db import models
 from django.utils import timezone
 from django.conf import settings
+from django.core.validators import RegexValidator
+from django.core.exceptions import ValidationError
 
-# Use settings.AUTH_USER_MODEL instead of importing get_user_model()
-# to avoid potential circular import issues.
 User = settings.AUTH_USER_MODEL
 
 
@@ -48,7 +48,7 @@ class Employee(models.Model):
     designation, and employment status.
     """
 
-    # Link to the custom user model
+    # Linked user account (contains username, email, emp_id, etc.)
     user = models.OneToOneField(
         User,
         on_delete=models.CASCADE,
@@ -83,6 +83,16 @@ class Employee(models.Model):
         help_text="Job title or position",
     )
 
+    # 📞 Contact number (added as per 2.2.1 requirement)
+    contact_number = models.CharField(
+        max_length=20,
+        validators=[RegexValidator(r"^\+?\d{7,15}$", "Enter a valid phone number.")],
+        blank=True,
+        null=True,
+        help_text="Official contact number",
+    )
+
+    # Employment status
     status = models.CharField(
         max_length=20,
         choices=[
@@ -94,7 +104,9 @@ class Employee(models.Model):
         help_text="Employment status",
     )
 
-    date_joined = models.DateField(default=timezone.now)
+    # 🗓️ Joining date
+    joining_date = models.DateField(default=timezone.now)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -102,6 +114,11 @@ class Employee(models.Model):
         verbose_name = "Employee"
         verbose_name_plural = "Employees"
         ordering = ["user__first_name"]
+        indexes = [
+            models.Index(fields=["department"]),
+            models.Index(fields=["manager"]),
+            models.Index(fields=["status"]),
+        ]
 
     def __str__(self):
         """
@@ -116,7 +133,15 @@ class Employee(models.Model):
         return "Unassigned Employee"
 
     # -------------------------------------------------
-    # Computed properties for easier access
+    # 🔹 Model-level Validation
+    # -------------------------------------------------
+    def clean(self):
+        """Prevent an employee from being assigned as their own manager."""
+        if self.manager and self.manager_id == self.id:
+            raise ValidationError("An employee cannot be their own manager.")
+
+    # -------------------------------------------------
+    # 🔹 Computed properties for easier access
     # -------------------------------------------------
     @property
     def emp_id(self):

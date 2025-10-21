@@ -32,6 +32,8 @@ INSTALLED_APPS = [
     "rest_framework.authtoken",
     "corsheaders",
     "drf_yasg",
+    'django_extensions',
+    'django_filters',
     # SimpleJWT blacklist app (required if BLACKLIST_AFTER_ROTATION=True)
     "rest_framework_simplejwt.token_blacklist",
 
@@ -39,6 +41,8 @@ INSTALLED_APPS = [
     "users",
     "employee",
     "performance",
+    "feedback",
+    "reports",
 ]
 
 # -------------------------------------------------------------------
@@ -50,7 +54,6 @@ MIDDLEWARE = [
 
     # CORS
     "corsheaders.middleware.CorsMiddleware",
-
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -83,6 +86,7 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "epts_backend.wsgi.application"
 
+'''
 # -------------------------------------------------------------------
 # DATABASE CONFIGURATION (MySQL)
 # -------------------------------------------------------------------
@@ -98,6 +102,15 @@ DATABASES = {
             # prevent some strict mode surprises
             "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
         },
+    }
+}'''
+
+# settings.py
+
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / "db.sqlite3",
     }
 }
 

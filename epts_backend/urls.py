@@ -48,6 +48,8 @@ urlpatterns = [
     path("api/users/", include("users.urls")),
     path("api/employee/", include("employee.urls")),
     path("api/performance/", include("performance.urls")),
+    path("api/feedback/", include("feedback.urls", namespace="feedback")),
+    path("api/reports/", include("reports.urls", namespace="reports")),
 ]
 
 # -------------------------------------------------------------------

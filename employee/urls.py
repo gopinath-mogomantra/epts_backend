@@ -1,4 +1,4 @@
-# ===============================================
+''' # ===============================================
 # employee/urls.py
 # ===============================================
 # URL routes for Department & Employee Management
@@ -44,4 +44,28 @@ urlpatterns = [
     path("employees/", EmployeeListView.as_view(), name="employee-list"),
     path("employees/create/", EmployeeCreateView.as_view(), name="employee-create"),
     path("employees/<int:pk>/", EmployeeDetailView.as_view(), name="employee-detail"),
+]
+'''
+
+# ===============================================
+# employee/urls.py
+# ===============================================
+# Updated routes for Department & Employee modules
+# using DRF DefaultRouter for unified CRUD endpoints
+# ===============================================
+
+from rest_framework.routers import DefaultRouter
+from django.urls import path, include
+from .views import DepartmentViewSet, EmployeeViewSet
+
+# ✅ Namespace for reverse URL lookups
+app_name = "employee"
+
+# DRF Router for automatic CRUD route generation
+router = DefaultRouter()
+router.register(r'departments', DepartmentViewSet, basename='department')
+router.register(r'employees', EmployeeViewSet, basename='employee')
+
+urlpatterns = [
+    path('', include(router.urls)),
 ]

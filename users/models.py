@@ -1,14 +1,13 @@
 # ===========================================================
 # users/models.py
 # ===========================================================
-# Custom user model for Employee Performance Tracking System (EPTS)
-# Includes role-based access, linking with Department,
-# and compatibility with Django Admin and JWT authentication.
+# Final Updated Version — Production-grade Custom User Model
 # ===========================================================
 
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
 from django.db import models
 from django.utils import timezone
+from django.core.validators import RegexValidator
 
 
 # ===========================================================
@@ -21,10 +20,14 @@ class UserManager(BaseUserManager):
         """Create and save a regular user."""
         if not username:
             raise ValueError("The Username field is required.")
+        if not extra_fields.get("emp_id"):
+            raise ValueError("The Employee ID (emp_id) field is required.")
+        if not extra_fields.get("email"):
+            raise ValueError("The Email field is required.")
 
         extra_fields.setdefault("is_active", True)
         user = self.model(username=username, **extra_fields)
-        user.set_password(password or "Mogo@12345")  # default password if not provided
+        user.set_password(password or "Mogo@12345")  # Default password if not provided
         user.save(using=self._db)
         return user
 
@@ -69,7 +72,14 @@ class User(AbstractBaseUser, PermissionsMixin):
     first_name = models.CharField(max_length=100, blank=True)
     last_name = models.CharField(max_length=100, blank=True)
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="Employee")
-    phone = models.CharField(max_length=15, null=True, blank=True)
+
+    # ✅ Phone validation
+    phone = models.CharField(
+        max_length=15,
+        null=True,
+        blank=True,
+        validators=[RegexValidator(r"^\+?\d{7,15}$", "Enter a valid phone number.")],
+    )
 
     # ⚠ Avoid circular import: use string reference for Department model
     department = models.ForeignKey(
@@ -105,6 +115,9 @@ class User(AbstractBaseUser, PermissionsMixin):
         verbose_name = "User"
         verbose_name_plural = "Users"
         ordering = ["emp_id"]
+        indexes = [
+            models.Index(fields=["username", "email", "emp_id"]),
+        ]
 
     def __str__(self):
         return f"{self.username} ({self.emp_id})"
@@ -120,4 +133,3 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def is_employee(self):
         return self.role == "Employee"
-    

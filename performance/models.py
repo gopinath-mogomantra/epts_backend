@@ -1,35 +1,30 @@
 # ===============================================
-# performance/models.py
-# ===============================================
-# Stores employee performance metrics and evaluation scores.
-# Includes evaluator type, weekly period tracking, and score computation.
+# performance/models.py (Final Polished Version)
 # ===============================================
 
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
+from django.core.exceptions import ValidationError
 
 
-# =====================================================
-# ✅ Helper Functions
-# =====================================================
+# -------------------------------------------------
+# ✅ Helper functions
+# -------------------------------------------------
 def current_week_number():
-    """Return the current ISO week number."""
     return timezone.now().isocalendar()[1]
 
-
 def current_year():
-    """Return the current year."""
     return timezone.now().year
 
 
-# =====================================================
+# -------------------------------------------------
 # ✅ PERFORMANCE EVALUATION MODEL
-# =====================================================
+# -------------------------------------------------
 class PerformanceEvaluation(models.Model):
     """
-    Stores performance data for employees.
-    Used for employee dashboards, performance ranking, and reports.
+    Stores weekly performance data for each employee.
+    One record per employee per week per evaluation_type.
     """
 
     # --- Foreign Keys ---
@@ -37,19 +32,15 @@ class PerformanceEvaluation(models.Model):
         "employee.Employee",
         on_delete=models.CASCADE,
         related_name="performance_evaluations",
-        null=True,
-        blank=True,
     )
-
     evaluator = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name="submitted_evaluations",
-        help_text="The Admin/Manager/Client who gave the evaluation.",
+        help_text="Admin, Manager, or Client who gave the evaluation.",
     )
-
     department = models.ForeignKey(
         "employee.Department",
         on_delete=models.SET_NULL,
@@ -64,7 +55,7 @@ class PerformanceEvaluation(models.Model):
         max_length=120,
         blank=True,
         default="",
-        help_text="E.g., WK:10/Nov/2025 - 16/Nov/2025",
+        help_text="E.g., Week 41 (07 Oct 2025 - 13 Oct 2025)",
     )
     week_number = models.PositiveSmallIntegerField(default=current_week_number)
     year = models.PositiveSmallIntegerField(default=current_year)
@@ -99,49 +90,61 @@ class PerformanceEvaluation(models.Model):
     attendance = models.PositiveSmallIntegerField(default=0)
     punctuality = models.PositiveSmallIntegerField(default=0)
 
-    # --- Computed Field ---
+    # --- Computed Fields ---
     total_score = models.PositiveIntegerField(default=0, help_text="Sum of all 15 metrics (max 1500).")
-
+    average_score = models.FloatField(default=0.0, help_text="Average score scaled to 100.")
+    rank = models.PositiveSmallIntegerField(null=True, blank=True, help_text="Rank position based on total score.")
     remarks = models.TextField(null=True, blank=True)
 
     # --- Audit Fields ---
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    # --- Meta ---
     class Meta:
         ordering = ["-review_date", "-created_at"]
         verbose_name = "Performance Evaluation"
         verbose_name_plural = "Performance Evaluations"
         unique_together = ("employee", "week_number", "year", "evaluation_type")
+        indexes = [
+            models.Index(fields=["employee"]),
+            models.Index(fields=["department"]),
+            models.Index(fields=["week_number", "year"]),
+        ]
 
-    # --- Methods ---
+    # -------------------------------------------------
+    # 🔹 Validation
+    # -------------------------------------------------
+    def clean(self):
+        for field in [
+            "communication_skills", "multitasking", "team_skills", "technical_skills",
+            "job_knowledge", "productivity", "creativity", "work_quality",
+            "professionalism", "work_consistency", "attitude", "cooperation",
+            "dependability", "attendance", "punctuality",
+        ]:
+            value = getattr(self, field)
+            if value < 0 or value > 100:
+                raise ValidationError({field: "Each metric must be between 0 and 100."})
+
+    # -------------------------------------------------
+    # 🔹 Score Calculation
+    # -------------------------------------------------
     def calculate_total_score(self):
-        """Compute the total performance score."""
         metrics = [
-            self.communication_skills,
-            self.multitasking,
-            self.team_skills,
-            self.technical_skills,
-            self.job_knowledge,
-            self.productivity,
-            self.creativity,
-            self.work_quality,
-            self.professionalism,
-            self.work_consistency,
-            self.attitude,
-            self.cooperation,
-            self.dependability,
-            self.attendance,
-            self.punctuality,
+            self.communication_skills, self.multitasking, self.team_skills,
+            self.technical_skills, self.job_knowledge, self.productivity,
+            self.creativity, self.work_quality, self.professionalism,
+            self.work_consistency, self.attitude, self.cooperation,
+            self.dependability, self.attendance, self.punctuality,
         ]
         total = sum(int(x or 0) for x in metrics)
         self.total_score = total
+        self.average_score = round((total / 1500) * 100, 2)
         return total
 
     def save(self, *args, **kwargs):
-        """Auto-update computed fields before saving."""
         self.calculate_total_score()
+        if not self.evaluation_period:
+            self.evaluation_period = f"Week {self.week_number} ({self.review_date.strftime('%d %b %Y')})"
         super().save(*args, **kwargs)
 
     def __str__(self):
@@ -150,4 +153,4 @@ class PerformanceEvaluation(models.Model):
             if self.employee and hasattr(self.employee, "user")
             else "Unknown Employee"
         )
-        return f"{emp_name} - {self.evaluation_type} | {self.total_score}"
+        return f"{emp_name} - {self.evaluation_type} | {self.average_score}%"
