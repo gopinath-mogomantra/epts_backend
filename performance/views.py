@@ -1,5 +1,5 @@
 # ===============================================
-# performance/views.py (Final Polished Version)
+# performance/views.py (Final Fixed & Enhanced)
 # ===============================================
 
 from rest_framework import viewsets, permissions, status, filters
@@ -23,6 +23,12 @@ from employee.models import Employee
 # ✅ 1. PERFORMANCE VIEWSET (CRUD + LIST)
 # ==========================================================
 class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
+    """
+    Handles CRUD operations for performance evaluations.
+    - Admins: Full access
+    - Managers: Access to their team's evaluations
+    - Employees: View only their own evaluations
+    """
     queryset = PerformanceEvaluation.objects.select_related(
         "employee__user", "evaluator", "department"
     ).all()
@@ -53,8 +59,10 @@ class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
                 {"error": "Only Admin or Manager can create evaluations."},
                 status=status.HTTP_403_FORBIDDEN,
             )
+
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+
         try:
             instance = serializer.save(evaluator=request.user)
         except IntegrityError:
@@ -62,6 +70,7 @@ class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
                 {"error": "Performance for this week already exists."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
         return Response(
             {
                 "message": "✅ Performance evaluation recorded successfully.",
@@ -72,9 +81,15 @@ class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
 
 
 # ==========================================================
-# ✅ 2. PERFORMANCE SUMMARY (TOP 3 / WEAK 3)
+# ✅ 2. PERFORMANCE SUMMARY (TOP 3 / WEAK 3 + DEPT SUMMARY)
 # ==========================================================
 class PerformanceSummaryView(APIView):
+    """
+    Provides weekly summary insights:
+    - Top 3 performers
+    - Weak 3 performers
+    - Department averages and top performers
+    """
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
@@ -87,6 +102,7 @@ class PerformanceSummaryView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        # 🔹 Get latest week and year
         latest_year = PerformanceEvaluation.objects.aggregate(max_year=Max("year"))["max_year"]
         latest_week = (
             PerformanceEvaluation.objects.filter(year=latest_year)
@@ -96,17 +112,24 @@ class PerformanceSummaryView(APIView):
         if not latest_week:
             return Response({"message": "No performance records available."}, status=200)
 
+        # 🔹 Fetch latest evaluations
         latest_evals = PerformanceEvaluation.objects.filter(
             year=latest_year, week_number=latest_week
         ).select_related("employee__user", "department")
 
+        # 🔹 Compute ranks safely (avoid model field conflict)
         ranked_evals = latest_evals.annotate(
-            rank=Window(expression=Rank(), order_by=F("total_score").desc())
-        ).order_by("rank")
+            computed_rank=Window(
+                expression=Rank(),
+                order_by=F("total_score").desc(),
+            )
+        ).order_by("computed_rank")
 
-        top_3 = ranked_evals[:3]
-        weak_3 = ranked_evals.order_by("total_score")[:3]
+        # ✅ Ensure unique, non-overlapping top & weak performers
+        top_3 = list(ranked_evals[:3])
+        weak_3 = [e for e in ranked_evals.order_by("total_score") if e not in top_3][:3]
 
+        # 🔹 Helper function to serialize employee details
         def serialize(emp):
             user = emp.employee.user
             return {
@@ -117,15 +140,45 @@ class PerformanceSummaryView(APIView):
                 "average_score": emp.average_score,
                 "evaluation_type": emp.evaluation_type,
                 "review_date": emp.review_date,
-                "rank": getattr(emp, "rank", None),
+                "rank": getattr(emp, "computed_rank", None),
             }
 
+        # 🔹 Compute department average
         dept_avg = round(latest_evals.aggregate(Avg("average_score"))["average_score__avg"], 2)
 
+        # ==========================================================
+        # 🔹 Department-wise summary
+        # ==========================================================
+        dept_summary = (
+            latest_evals.values("department__name")
+            .annotate(avg_score=Avg("average_score"))
+            .order_by("department__name")
+        )
+
+        department_summary = []
+        for d in dept_summary:
+            dept_name = d["department__name"] or "N/A"
+            top_in_dept = (
+                latest_evals.filter(department__name=dept_name)
+                .order_by("-total_score")
+                .first()
+            )
+            department_summary.append({
+                "department": dept_name,
+                "avg_score": round(d["avg_score"], 2) if d["avg_score"] else 0,
+                "top_performer": (
+                    f"{top_in_dept.employee.user.first_name} {top_in_dept.employee.user.last_name}".strip()
+                    if top_in_dept and hasattr(top_in_dept, "employee")
+                    else "-"
+                )
+            })
+
+        # 🔹 Final Response
         return Response(
             {
                 "evaluation_period": f"Week {latest_week}, {latest_year}",
                 "department_average": dept_avg,
+                "department_summary": department_summary,
                 "top_performers": [serialize(e) for e in top_3],
                 "weak_performers": [serialize(e) for e in weak_3],
             },
@@ -137,6 +190,10 @@ class PerformanceSummaryView(APIView):
 # ✅ 3. EMPLOYEE DASHBOARD (SELF PERFORMANCE VIEW)
 # ==========================================================
 class EmployeeDashboardView(APIView):
+    """
+    Shows an employee's personal performance dashboard.
+    Includes average, best week, and trend chart data.
+    """
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):

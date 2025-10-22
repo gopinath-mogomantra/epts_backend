@@ -1,10 +1,11 @@
 # ===============================================
-# performance/serializers.py (Final Polished Version)
+# performance/serializers.py (Final Validated + Polished)
 # ===============================================
 
 from rest_framework import serializers
 from django.utils import timezone
 from django.contrib.auth import get_user_model
+from django.db.models import Q
 from .models import PerformanceEvaluation
 from employee.models import Department, Employee
 
@@ -42,7 +43,7 @@ class SimpleEmployeeSerializer(serializers.ModelSerializer):
         fields = ["id", "user", "designation", "status", "role", "manager_name", "department_name"]
 
     def get_role(self, obj):
-        return obj.user.role if obj.user else None
+        return getattr(obj.user, "role", None)
 
     def get_manager_name(self, obj):
         if obj.manager and obj.manager.user:
@@ -52,7 +53,7 @@ class SimpleEmployeeSerializer(serializers.ModelSerializer):
 
 
 # ======================================================
-# ✅ 2. Full Performance Evaluation Serializer (GET)
+# ✅ 2. GET Serializer (Read-Only)
 # ======================================================
 class PerformanceEvaluationSerializer(serializers.ModelSerializer):
     employee = SimpleEmployeeSerializer(read_only=True)
@@ -113,7 +114,7 @@ class PerformanceEvaluationSerializer(serializers.ModelSerializer):
 
 
 # ======================================================
-# ✅ 3. Create / Update Serializer (POST / PUT)
+# ✅ 3. CREATE / UPDATE Serializer (Validated)
 # ======================================================
 class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
     employee = serializers.PrimaryKeyRelatedField(queryset=Employee.objects.all())
@@ -152,7 +153,29 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
             "remarks",
         ]
 
-    def validate(self, data):
+    # -------------------------------------------------
+    # 🔹 Field-level & global validation
+    # -------------------------------------------------
+    def validate_review_date(self, value):
+        if value > timezone.now().date():
+            raise serializers.ValidationError("Review date cannot be in the future.")
+        return value
+
+    def validate(self, attrs):
+        employee = attrs.get("employee")
+        review_date = attrs.get("review_date", timezone.now().date())
+        evaluation_type = attrs.get("evaluation_type", "Manager")
+
+        # Evaluator must be Admin or Manager
+        request = self.context.get("request")
+        if request and hasattr(request.user, "role"):
+            role = request.user.role.lower()
+            if role not in ["admin", "manager"]:
+                raise serializers.ValidationError(
+                    {"evaluator": "Only Admin or Manager can create evaluations."}
+                )
+
+        # Validate metric range
         metric_fields = [
             "communication_skills", "multitasking", "team_skills",
             "technical_skills", "job_knowledge", "productivity",
@@ -161,19 +184,30 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
             "dependability", "attendance", "punctuality",
         ]
         for field in metric_fields:
-            value = data.get(field, 0)
+            value = attrs.get(field, 0)
             if not (0 <= int(value) <= 100):
-                raise serializers.ValidationError({field: "Score must be between 0 and 100."})
-        return data
+                raise serializers.ValidationError({field: "Each metric must be between 0 and 100."})
 
+        # Duplicate prevention
+        week_number = review_date.isocalendar()[1]
+        year = review_date.year
+        existing = PerformanceEvaluation.objects.filter(
+            employee=employee, week_number=week_number, year=year, evaluation_type=evaluation_type
+        )
+        instance = getattr(self, "instance", None)
+        if instance:
+            existing = existing.exclude(pk=instance.pk)
+        if existing.exists():
+            raise serializers.ValidationError(
+                f"Performance evaluation already exists for {employee.user.emp_id} in Week {week_number}, {year} ({evaluation_type})."
+            )
+
+        return attrs
+
+    # -------------------------------------------------
+    # 🔹 Create / Update logic
+    # -------------------------------------------------
     def create(self, validated_data):
-        emp = validated_data["employee"]
-        week = validated_data.get("week_number") or timezone.now().isocalendar()[1]
-        year = validated_data.get("year") or timezone.now().year
-        if PerformanceEvaluation.objects.filter(
-            employee=emp, week_number=week, year=year, evaluation_type=validated_data.get("evaluation_type")
-        ).exists():
-            raise serializers.ValidationError("Performance for this week and evaluator type already exists.")
         instance = PerformanceEvaluation.objects.create(**validated_data)
         instance.save()
         return instance
@@ -186,7 +220,7 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
 
 
 # ======================================================
-# ✅ 4. Dashboard / Summary Serializer
+# ✅ 4. DASHBOARD / SUMMARY Serializer
 # ======================================================
 class PerformanceDashboardSerializer(serializers.ModelSerializer):
     emp_id = serializers.SerializerMethodField()

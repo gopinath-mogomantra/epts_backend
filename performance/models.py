@@ -1,5 +1,5 @@
 # ===============================================
-# performance/models.py (Final Polished Version)
+# performance/models.py (Final Updated Version)
 # ===============================================
 
 from django.db import models
@@ -12,9 +12,12 @@ from django.core.exceptions import ValidationError
 # ✅ Helper functions
 # -------------------------------------------------
 def current_week_number():
+    """Return the current ISO week number."""
     return timezone.now().isocalendar()[1]
 
+
 def current_year():
+    """Return the current year."""
     return timezone.now().year
 
 
@@ -50,7 +53,8 @@ class PerformanceEvaluation(models.Model):
     )
 
     # --- Evaluation Meta Info ---
-    review_date = models.DateField(default=timezone.now)
+    # 🔹 Fixed bug: Use timezone.localdate() → returns pure date (not datetime)
+    review_date = models.DateField(default=timezone.localdate)
     evaluation_period = models.CharField(
         max_length=120,
         blank=True,
@@ -91,15 +95,24 @@ class PerformanceEvaluation(models.Model):
     punctuality = models.PositiveSmallIntegerField(default=0)
 
     # --- Computed Fields ---
-    total_score = models.PositiveIntegerField(default=0, help_text="Sum of all 15 metrics (max 1500).")
-    average_score = models.FloatField(default=0.0, help_text="Average score scaled to 100.")
-    rank = models.PositiveSmallIntegerField(null=True, blank=True, help_text="Rank position based on total score.")
+    total_score = models.PositiveIntegerField(
+        default=0, help_text="Sum of all 15 metrics (max 1500)."
+    )
+    average_score = models.FloatField(
+        default=0.0, help_text="Average score scaled to 100."
+    )
+    rank = models.PositiveSmallIntegerField(
+        null=True, blank=True, help_text="Rank position based on total score."
+    )
     remarks = models.TextField(null=True, blank=True)
 
     # --- Audit Fields ---
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # -------------------------------------------------
+    # 🔹 Meta Info
+    # -------------------------------------------------
     class Meta:
         ordering = ["-review_date", "-created_at"]
         verbose_name = "Performance Evaluation"
@@ -115,6 +128,7 @@ class PerformanceEvaluation(models.Model):
     # 🔹 Validation
     # -------------------------------------------------
     def clean(self):
+        """Ensure all metric fields are between 0 and 100."""
         for field in [
             "communication_skills", "multitasking", "team_skills", "technical_skills",
             "job_knowledge", "productivity", "creativity", "work_quality",
@@ -129,6 +143,7 @@ class PerformanceEvaluation(models.Model):
     # 🔹 Score Calculation
     # -------------------------------------------------
     def calculate_total_score(self):
+        """Calculate total and average scores for all metrics."""
         metrics = [
             self.communication_skills, self.multitasking, self.team_skills,
             self.technical_skills, self.job_knowledge, self.productivity,
@@ -141,12 +156,19 @@ class PerformanceEvaluation(models.Model):
         self.average_score = round((total / 1500) * 100, 2)
         return total
 
+    # -------------------------------------------------
+    # 🔹 Save Override
+    # -------------------------------------------------
     def save(self, *args, **kwargs):
+        """Automatically calculate total, average, and evaluation period."""
         self.calculate_total_score()
         if not self.evaluation_period:
             self.evaluation_period = f"Week {self.week_number} ({self.review_date.strftime('%d %b %Y')})"
         super().save(*args, **kwargs)
 
+    # -------------------------------------------------
+    # 🔹 String Representation
+    # -------------------------------------------------
     def __str__(self):
         emp_name = (
             f"{self.employee.user.first_name} {self.employee.user.last_name}".strip()
