@@ -226,3 +226,11 @@ LOGGING = {
 # -------------------------------------------------------------------
 APP_NAME = "Employee Performance Tracking System (EPTS)"
 VERSION = "1.0.0"
+
+
+from datetime import timedelta
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=240),  # 2 hours
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+}

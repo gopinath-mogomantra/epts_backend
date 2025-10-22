@@ -82,6 +82,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
         model = Employee
         fields = [
             "id",
+            "user",
             "emp_id",
             "first_name",
             "last_name",
@@ -126,6 +127,8 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
         write_only=True,
         required=False,
     )
+    
+
 
     class Meta:
         model = Employee
@@ -220,11 +223,29 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
     # -------------------------------
     # 🔹 UPDATE LOGIC
     # -------------------------------
+
     def update(self, instance, validated_data):
+        """
+        Handles updates to both Employee and linked User fields.
+        Safely skips read-only / property fields.
+        """
         department = validated_data.pop("department", None)
+
+        # 🔹 Handle department update
         if department:
             instance.department = department
 
+        # 🔹 Update linked User fields
+        user = instance.user
+        user_fields = ["username", "email", "emp_id", "first_name", "last_name", "role"]
+        for field in user_fields:
+            if field in validated_data:
+                setattr(user, field, validated_data.pop(field))
+
+        # 🔹 Save the User model
+        user.save()
+
+        # 🔹 Update Employee-specific fields
         for field, value in validated_data.items():
             setattr(instance, field, value)
 
