@@ -59,6 +59,10 @@ class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
                 {"error": "Only Admin or Manager can create evaluations."},
                 status=status.HTTP_403_FORBIDDEN,
             )
+        
+        employee = serializer.validated_data.get("employee")
+        if employee and not serializer.validated_data.get("department"):
+            serializer.validated_data["department"] = employee.department
 
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)

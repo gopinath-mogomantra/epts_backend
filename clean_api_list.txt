@@ -24,7 +24,9 @@
 /api/feedback/client-feedback/	feedback.views.ClientFeedbackViewSet	feedback:client-feedback-list
 /api/feedback/client-feedback/<pk>/	feedback.views.ClientFeedbackViewSet	feedback:client-feedback-detail
 
-/api/reports/weekly/	reports.views.WeeklyReportView	reports:weekly-report
-/api/reports/monthly/	reports.views.MonthlyReportView	reports:monthly-report
-/api/reports/employee/<str:emp_id>/history/	reports.views.EmployeeHistoryView	reports:employee-history
-/api/reports/export/weekly-csv/	reports.views.ExportWeeklyCSVView	reports:export-weekly-csv
+/api/reports/weekly/                               reports.views.WeeklyReportView               reports:weekly-report
+/api/reports/monthly/                              reports.views.MonthlyReportView              reports:monthly-report
+/api/reports/manager/                              reports.views.ManagerReportView              reports:manager-report
+/api/reports/department/                           reports.views.DepartmentReportView           reports:department-report
+/api/reports/employee/<str:emp_id>/history/        reports.views.EmployeeHistoryView            reports:employee-history
+/api/reports/export/weekly-csv/                    reports.views.ExportWeeklyCSVView            reports:export-weekly-csv

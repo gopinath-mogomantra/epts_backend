@@ -1,18 +1,21 @@
 # ===============================================
-# reports/urls.py
+# reports/urls.py (Final Updated Version)
 # ===============================================
 # Routes for:
-# 1. Weekly consolidated report
-# 2. Monthly consolidated report
-# 3. Employee performance history
-# 4. Weekly CSV export
-# 5. (Optional) Cached & Combined Reports for Admin use
+# 1️⃣ Weekly consolidated report
+# 2️⃣ Monthly consolidated report
+# 3️⃣ Manager-wise weekly report
+# 4️⃣ Department-wise weekly report
+# 5️⃣ Employee performance history
+# 6️⃣ Weekly CSV export
 # ===============================================
 
 from django.urls import path
 from .views import (
     WeeklyReportView,
     MonthlyReportView,
+    ManagerReportView,
+    DepartmentReportView,
     EmployeeHistoryView,
     ExportWeeklyCSVView,
 )
@@ -22,7 +25,7 @@ app_name = "reports"
 urlpatterns = [
     # ----------------------------------------------------
     # 1️⃣ Weekly Consolidated Report
-    # Example: /api/reports/weekly/?week=41&year=2025
+    # Example: /api/reports/weekly/?week=43&year=2025
     # ----------------------------------------------------
     path("weekly/", WeeklyReportView.as_view(), name="weekly-report"),
 
@@ -33,8 +36,20 @@ urlpatterns = [
     path("monthly/", MonthlyReportView.as_view(), name="monthly-report"),
 
     # ----------------------------------------------------
-    # 3️⃣ Employee Performance History (Trend)
-    # Example: /api/reports/employee/EMP001/history/
+    # 3️⃣ Manager-Wise Weekly Report
+    # Example: /api/reports/manager/?manager_name=Ravi Verma&week=43&year=2025
+    # ----------------------------------------------------
+    path("manager/", ManagerReportView.as_view(), name="manager-report"),
+
+    # ----------------------------------------------------
+    # 4️⃣ Department-Wise Weekly Report
+    # Example: /api/reports/department/?department_name=IT&week=43&year=2025
+    # ----------------------------------------------------
+    path("department/", DepartmentReportView.as_view(), name="department-report"),
+
+    # ----------------------------------------------------
+    # 5️⃣ Employee Performance History (Trend)
+    # Example: /api/reports/employee/EMP3005/history/
     # ----------------------------------------------------
     path(
         "employee/<str:emp_id>/history/",
@@ -43,17 +58,8 @@ urlpatterns = [
     ),
 
     # ----------------------------------------------------
-    # 4️⃣ Export Weekly Report as CSV
-    # Example: /api/reports/export/weekly-csv/?week=41&year=2025
+    # 6️⃣ Export Weekly Report as CSV
+    # Example: /api/reports/export/weekly-csv/?week=43&year=2025
     # ----------------------------------------------------
     path("export/weekly-csv/", ExportWeeklyCSVView.as_view(), name="export-weekly-csv"),
 ]
-
-# ================================================================
-# 🔁 Future Extensions (for reference)
-# ================================================================
-# from .views import CachedReportListView, CombinedReportView
-# urlpatterns += [
-#     path("cached/", CachedReportListView.as_view(), name="cached-report-list"),
-#     path("combined/", CombinedReportView.as_view(), name="combined-report"),
-# ]

@@ -1,8 +1,8 @@
 # ===============================================
-# reports/views.py
+# reports/views.py (Final Updated Version)
 # ===============================================
-# Handles Weekly, Monthly, and Employee History Reports
-# Combines data from Employee, Performance, and Feedback apps
+# Handles Weekly, Monthly, Manager-Wise,
+# Department-Wise, and Employee History Reports.
 # ===============================================
 
 from rest_framework.views import APIView
@@ -23,11 +23,13 @@ from .serializers import (
     WeeklyReportSerializer,
     MonthlyReportSerializer,
     EmployeeHistorySerializer,
+    ManagerReportSerializer,
+    DepartmentReportSerializer,
 )
 
 
 # ===========================================================
-# 🧠 Helper: Calculate Feedback Average for an Employee
+# 🧠 Helper: Calculate Feedback Average
 # ===========================================================
 def get_feedback_average(employee, start_date=None, end_date=None):
     """Compute average rating from all feedback sources for a given employee."""
@@ -73,7 +75,6 @@ class WeeklyReportView(APIView):
                 status=status.HTTP_204_NO_CONTENT,
             )
 
-        # Feedback averages for each employee
         feedback_map = {
             emp.id: get_feedback_average(emp)
             for emp in Employee.objects.filter(
@@ -100,7 +101,6 @@ class WeeklyReportView(APIView):
             for obj in ranked
         ]
 
-        # Optional: save cached report
         if save_cache:
             CachedReport.objects.create(
                 report_type="weekly",
@@ -144,7 +144,11 @@ class MonthlyReportView(APIView):
 
             avg_score = round(emp_perfs.aggregate(avg=Avg("average_score"))["avg"], 2)
             best_week_obj = emp_perfs.order_by("-average_score").first()
-            fb_avg = get_feedback_average(emp, start_date=best_week_obj.created_at - timedelta(days=30), end_date=best_week_obj.created_at)
+            fb_avg = get_feedback_average(
+                emp,
+                start_date=best_week_obj.created_at - timedelta(days=30),
+                end_date=best_week_obj.created_at,
+            )
 
             data.append({
                 "emp_id": emp.user.emp_id,
@@ -172,7 +176,103 @@ class MonthlyReportView(APIView):
 
 
 # ===========================================================
-# ✅ 3. EMPLOYEE PERFORMANCE HISTORY (TREND)
+# ✅ 3. MANAGER-WISE WEEKLY REPORT (NEW)
+# ===========================================================
+class ManagerReportView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        """Returns weekly performance report for all employees under a given manager."""
+        manager_name = request.query_params.get("manager_name")
+        week = int(request.query_params.get("week", timezone.now().isocalendar()[1]))
+        year = int(request.query_params.get("year", timezone.now().year))
+
+        if not manager_name:
+            return Response({"error": "Please provide manager_name."}, status=status.HTTP_400_BAD_REQUEST)
+
+        employees = Employee.objects.filter(manager_name__iexact=manager_name)
+        perf_qs = PerformanceEvaluation.objects.filter(
+            employee__in=employees, week_number=week, year=year
+        ).select_related("employee__user", "department")
+
+        if not perf_qs.exists():
+            return Response(
+                {"message": f"No data found for manager {manager_name} in Week {week}, {year}."},
+                status=status.HTTP_204_NO_CONTENT,
+            )
+
+        data = []
+        for obj in perf_qs:
+            emp = obj.employee
+            fb_avg = get_feedback_average(emp)
+            data.append({
+                "manager_name": manager_name,
+                "emp_id": emp.user.emp_id,
+                "employee_name": f"{emp.user.first_name} {emp.user.last_name}",
+                "department": emp.department.name if emp.department else "-",
+                "total_score": obj.total_score,
+                "average_score": obj.average_score,
+                "feedback_avg": fb_avg,
+                "week_number": week,
+                "year": year,
+                "rank": obj.rank,
+                "remarks": obj.remarks,
+            })
+
+        serializer = ManagerReportSerializer(data, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+# ===========================================================
+# ✅ 4. DEPARTMENT-WISE WEEKLY REPORT (NEW)
+# ===========================================================
+class DepartmentReportView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        """Returns weekly performance report for all employees in a department."""
+        department_name = request.query_params.get("department_name")
+        week = int(request.query_params.get("week", timezone.now().isocalendar()[1]))
+        year = int(request.query_params.get("year", timezone.now().year))
+
+        if not department_name:
+            return Response({"error": "Please provide department_name."}, status=status.HTTP_400_BAD_REQUEST)
+
+        employees = Employee.objects.filter(department__name__iexact=department_name)
+        perf_qs = PerformanceEvaluation.objects.filter(
+            employee__in=employees, week_number=week, year=year
+        ).select_related("employee__user", "department")
+
+        if not perf_qs.exists():
+            return Response(
+                {"message": f"No data found for department {department_name} in Week {week}, {year}."},
+                status=status.HTTP_204_NO_CONTENT,
+            )
+
+        data = []
+        for obj in perf_qs:
+            emp = obj.employee
+            fb_avg = get_feedback_average(emp)
+            data.append({
+                "department_name": department_name,
+                "emp_id": emp.user.emp_id,
+                "employee_name": f"{emp.user.first_name} {emp.user.last_name}",
+                "manager_name": emp.manager_name or "-",
+                "total_score": obj.total_score,
+                "average_score": obj.average_score,
+                "feedback_avg": fb_avg,
+                "week_number": week,
+                "year": year,
+                "rank": obj.rank,
+                "remarks": obj.remarks,
+            })
+
+        serializer = DepartmentReportSerializer(data, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+# ===========================================================
+# ✅ 5. EMPLOYEE PERFORMANCE HISTORY
 # ===========================================================
 class EmployeeHistoryView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -205,7 +305,7 @@ class EmployeeHistoryView(APIView):
 
 
 # ===========================================================
-# ✅ 4. EXPORT WEEKLY REPORT AS CSV
+# ✅ 6. EXPORT WEEKLY REPORT AS CSV
 # ===========================================================
 class ExportWeeklyCSVView(APIView):
     permission_classes = [permissions.IsAuthenticated]
