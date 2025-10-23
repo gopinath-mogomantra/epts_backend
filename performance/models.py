@@ -1,5 +1,5 @@
 # ===============================================
-# performance/models.py (Final Updated Version)
+# performance/models.py 
 # ===============================================
 
 from django.db import models
@@ -9,7 +9,7 @@ from django.core.exceptions import ValidationError
 
 
 # -------------------------------------------------
-# ✅ Helper functions
+# Helper functions
 # -------------------------------------------------
 def current_week_number():
     """Return the current ISO week number."""
@@ -22,7 +22,7 @@ def current_year():
 
 
 # -------------------------------------------------
-# ✅ PERFORMANCE EVALUATION MODEL
+# PERFORMANCE EVALUATION MODEL
 # -------------------------------------------------
 class PerformanceEvaluation(models.Model):
     """
@@ -53,7 +53,6 @@ class PerformanceEvaluation(models.Model):
     )
 
     # --- Evaluation Meta Info ---
-    # 🔹 Fixed bug: Use timezone.localdate() → returns pure date (not datetime)
     review_date = models.DateField(default=timezone.localdate)
     evaluation_period = models.CharField(
         max_length=120,
@@ -111,7 +110,7 @@ class PerformanceEvaluation(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     # -------------------------------------------------
-    # 🔹 Meta Info
+    # Meta Info
     # -------------------------------------------------
     class Meta:
         ordering = ["-review_date", "-created_at"]
@@ -125,7 +124,7 @@ class PerformanceEvaluation(models.Model):
         ]
 
     # -------------------------------------------------
-    # 🔹 Validation
+    # Validation
     # -------------------------------------------------
     def clean(self):
         """Ensure all metric fields are between 0 and 100."""
@@ -140,7 +139,7 @@ class PerformanceEvaluation(models.Model):
                 raise ValidationError({field: "Each metric must be between 0 and 100."})
 
     # -------------------------------------------------
-    # 🔹 Score Calculation
+    # Score Calculation
     # -------------------------------------------------
     def calculate_total_score(self):
         """Calculate total and average scores for all metrics."""
@@ -157,7 +156,7 @@ class PerformanceEvaluation(models.Model):
         return total
 
     # -------------------------------------------------
-    # 🔹 Save Override
+    # Save Override
     # -------------------------------------------------
     def save(self, *args, **kwargs):
         """Automatically calculate total, average, and evaluation period."""
@@ -167,7 +166,7 @@ class PerformanceEvaluation(models.Model):
         super().save(*args, **kwargs)
 
     # -------------------------------------------------
-    # 🔹 String Representation
+    # String Representation
     # -------------------------------------------------
     def __str__(self):
         emp_name = (

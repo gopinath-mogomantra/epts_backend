@@ -15,7 +15,7 @@ class PerformanceEvaluationAdmin(admin.ModelAdmin):
     Provides search, filtering, and read-only scoring.
     """
 
-    # ✅ Fields displayed in the list view
+    # Fields displayed in the list view
     list_display = (
         "id",
         "get_emp_id",
@@ -30,7 +30,7 @@ class PerformanceEvaluationAdmin(admin.ModelAdmin):
         "created_at",
     )
 
-    # ✅ Filters for sidebar filtering
+    # Filters for sidebar filtering
     list_filter = (
         "evaluation_type",
         "department",
@@ -38,7 +38,7 @@ class PerformanceEvaluationAdmin(admin.ModelAdmin):
         "week_number",
     )
 
-    # ✅ Fields that can be searched in admin
+    # Fields that can be searched in admin
     search_fields = (
         "employee__user__emp_id",
         "employee__user__first_name",
@@ -48,13 +48,13 @@ class PerformanceEvaluationAdmin(admin.ModelAdmin):
         "evaluation_type",
     )
 
-    # ✅ Default ordering (most recent first)
+    # Default ordering (most recent first)
     ordering = ("-review_date", "-created_at")
 
-    # ✅ Make computed fields read-only
+    # Make computed fields read-only
     readonly_fields = ("total_score", "average_score", "created_at", "updated_at")
 
-    # ✅ Custom display methods
+    # Custom display methods
     def get_emp_id(self, obj):
         """Fetch Employee ID from linked user."""
         return getattr(obj.employee.user, "emp_id", "-") if obj.employee and obj.employee.user else "-"

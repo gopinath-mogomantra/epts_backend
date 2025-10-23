@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     "performance",
     "feedback",
     "reports",
+    "notifications",
 ]
 
 # -------------------------------------------------------------------
@@ -118,6 +119,7 @@ DATABASES = {
 # CUSTOM USER MODEL
 # -------------------------------------------------------------------
 AUTH_USER_MODEL = "users.User"
+
 
 # -------------------------------------------------------------------
 # PASSWORD VALIDATORS
@@ -231,6 +233,6 @@ VERSION = "1.0.0"
 from datetime import timedelta
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=240),  # 2 hours
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=1240),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
 }

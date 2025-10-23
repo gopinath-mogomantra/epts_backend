@@ -1,5 +1,5 @@
 # ===============================================
-# reports/serializers.py (Final Updated Version)
+# reports/serializers.py (Final — full_name standardized)
 # ===============================================
 # Combines data from Performance + Feedback modules
 # to generate weekly, monthly, manager-wise,
@@ -28,7 +28,9 @@ class SimpleEmployeeSerializer(serializers.ModelSerializer):
 
     def get_full_name(self, obj):
         u = obj.user
-        return f"{u.first_name} {u.last_name}".strip()
+        first = u.first_name or ""
+        last = u.last_name or ""
+        return f"{first} {last}".strip()
 
 
 # -------------------------------------------------
@@ -37,7 +39,7 @@ class SimpleEmployeeSerializer(serializers.ModelSerializer):
 class WeeklyReportSerializer(serializers.Serializer):
     """Represents a consolidated weekly report entry per employee."""
     emp_id = serializers.CharField()
-    employee_name = serializers.CharField()
+    employee_full_name = serializers.CharField()  # ✅ updated name
     department = serializers.CharField()
     total_score = serializers.FloatField()
     average_score = serializers.FloatField()
@@ -45,6 +47,7 @@ class WeeklyReportSerializer(serializers.Serializer):
     week_number = serializers.IntegerField()
     year = serializers.IntegerField()
     rank = serializers.IntegerField()
+    remarks = serializers.CharField(allow_blank=True, allow_null=True, required=False)
 
 
 # -------------------------------------------------
@@ -53,7 +56,7 @@ class WeeklyReportSerializer(serializers.Serializer):
 class MonthlyReportSerializer(serializers.Serializer):
     """Aggregated monthly summary of performance and feedback."""
     emp_id = serializers.CharField()
-    employee_name = serializers.CharField()
+    employee_full_name = serializers.CharField()  # ✅ updated
     department = serializers.CharField()
     month = serializers.IntegerField()
     year = serializers.IntegerField()
@@ -77,13 +80,13 @@ class EmployeeHistorySerializer(serializers.Serializer):
 
 
 # -------------------------------------------------
-# ✅ 5. Manager-Wise Report Serializer (NEW)
+# ✅ 5. Manager-Wise Report Serializer
 # -------------------------------------------------
 class ManagerReportSerializer(serializers.Serializer):
     """Weekly performance report of all employees under a manager."""
-    manager_name = serializers.CharField()
+    manager_full_name = serializers.CharField()  # ✅ updated
     emp_id = serializers.CharField()
-    employee_name = serializers.CharField()
+    employee_full_name = serializers.CharField()  # ✅ updated
     department = serializers.CharField()
     total_score = serializers.FloatField()
     average_score = serializers.FloatField()
@@ -95,14 +98,14 @@ class ManagerReportSerializer(serializers.Serializer):
 
 
 # -------------------------------------------------
-# ✅ 6. Department-Wise Report Serializer (NEW)
+# ✅ 6. Department-Wise Report Serializer
 # -------------------------------------------------
 class DepartmentReportSerializer(serializers.Serializer):
     """Weekly performance report of all employees in a department."""
     department_name = serializers.CharField()
     emp_id = serializers.CharField()
-    employee_name = serializers.CharField()
-    manager_name = serializers.CharField()
+    employee_full_name = serializers.CharField()  # ✅ updated
+    manager_full_name = serializers.CharField()   # ✅ updated
     total_score = serializers.FloatField()
     average_score = serializers.FloatField()
     feedback_avg = serializers.FloatField()
@@ -117,6 +120,7 @@ class DepartmentReportSerializer(serializers.Serializer):
 # -------------------------------------------------
 class CachedReportSerializer(serializers.ModelSerializer):
     """Serializer for cached precomputed reports."""
+    generated_by_full_name = serializers.SerializerMethodField(read_only=True)  # ✅ added
     generated_by_name = serializers.CharField(source="generated_by.username", read_only=True)
     period_display = serializers.SerializerMethodField()
 
@@ -135,10 +139,19 @@ class CachedReportSerializer(serializers.ModelSerializer):
             "generated_at",
             "generated_by",
             "generated_by_name",
+            "generated_by_full_name",  # ✅ added
             "is_active",
             "period_display",
         ]
-        read_only_fields = ["generated_at", "generated_by_name", "period_display"]
+        read_only_fields = ["generated_at", "generated_by_name", "generated_by_full_name", "period_display"]
+
+    def get_generated_by_full_name(self, obj):
+        """Return the full name of the report generator."""
+        if obj.generated_by:
+            first = obj.generated_by.first_name or ""
+            last = obj.generated_by.last_name or ""
+            return f"{first} {last}".strip()
+        return "-"
 
     def get_period_display(self, obj):
         """Readable label for report period."""
@@ -157,7 +170,7 @@ class CombinedReportSerializer(serializers.Serializer):
     type = serializers.ChoiceField(choices=["weekly", "monthly", "manager", "department"])
     year = serializers.IntegerField()
     week_or_month = serializers.IntegerField()
-    generated_by = serializers.CharField()
+    generated_by_full_name = serializers.CharField()  # ✅ added
     total_employees = serializers.IntegerField()
     average_org_score = serializers.FloatField()
     top_performers = serializers.ListField(child=serializers.CharField())

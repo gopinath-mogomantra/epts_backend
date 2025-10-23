@@ -1,7 +1,6 @@
 # ===============================================
-# employee/serializers.py
+# employee/serializers.py (Final Synced with emp_id-login system)
 # ===============================================
-
 
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
@@ -12,7 +11,7 @@ User = get_user_model()
 
 
 # ===============================================================
-# ✅ 1. DEPARTMENT SERIALIZER
+# DEPARTMENT SERIALIZER
 # ===============================================================
 class DepartmentSerializer(serializers.ModelSerializer):
     employee_count = serializers.SerializerMethodField(read_only=True)
@@ -49,26 +48,42 @@ class DepartmentSerializer(serializers.ModelSerializer):
 
 
 # ===============================================================
-# ✅ 2. USER SUMMARY SERIALIZER (READ-ONLY)
+# USER SUMMARY SERIALIZER (FOR ALL ROLES)
 # ===============================================================
 class UserSummarySerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField(read_only=True)
+
     class Meta:
         model = User
-        fields = ["id", "emp_id", "username", "first_name", "last_name", "email", "role"]
+        fields = [
+            "id",
+            "emp_id",
+            "first_name",
+            "last_name",
+            "full_name",
+            "email",
+            "role",
+        ]
+
+    def get_full_name(self, obj):
+        first = obj.first_name or ""
+        last = obj.last_name or ""
+        return f"{first} {last}".strip()
 
 
 # ===============================================================
-# ✅ 3. EMPLOYEE SERIALIZER (List / Detail)
+# EMPLOYEE SERIALIZER (List / Detail)
 # ===============================================================
 class EmployeeSerializer(serializers.ModelSerializer):
     user = UserSummarySerializer(read_only=True)
     department = DepartmentSerializer(read_only=True)
     department_name = serializers.CharField(source="department.name", read_only=True)
-    manager_name = serializers.ReadOnlyField()
+    manager_name = serializers.SerializerMethodField(read_only=True)
 
     emp_id = serializers.ReadOnlyField(source="user.emp_id")
     first_name = serializers.ReadOnlyField(source="user.first_name")
     last_name = serializers.ReadOnlyField(source="user.last_name")
+    full_name = serializers.ReadOnlyField(source="user.full_name")
     email = serializers.ReadOnlyField(source="user.email")
     role = serializers.ReadOnlyField(source="user.role")
 
@@ -80,6 +95,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
             "emp_id",
             "first_name",
             "last_name",
+            "full_name",
             "email",
             "contact_number",
             "department",
@@ -95,45 +111,53 @@ class EmployeeSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["created_at", "updated_at"]
 
+    def get_manager_name(self, obj):
+        if obj.manager and obj.manager.user:
+            first = obj.manager.user.first_name or ""
+            last = obj.manager.user.last_name or ""
+            return f"{first} {last}".strip()
+        return None
+
 
 # ===============================================================
-# ✅ 4. EMPLOYEE CREATE / UPDATE SERIALIZER (Business Logic Enforced)
+# EMPLOYEE CREATE / UPDATE SERIALIZER
 # ===============================================================
 class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
     """
-    Used for POST and PUT/PATCH operations.
-    Automatically creates / updates the linked User record.
-    Applies strict validation rules for business logic.
+    Create/Update Employee:
+    - emp_id auto-generated and used as username
+    - password auto-generated securely
+    - department and manager editable
     """
 
-    # Linked User fields
-    username = serializers.CharField(write_only=True)
     email = serializers.EmailField(write_only=True)
-    emp_id = serializers.CharField(write_only=True)
     first_name = serializers.CharField(write_only=True)
     last_name = serializers.CharField(write_only=True)
     role = serializers.ChoiceField(choices=User.ROLE_CHOICES, write_only=True)
-    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
-    # Department relation
     department_id = serializers.PrimaryKeyRelatedField(
         queryset=Department.objects.all(),
         source="department",
         write_only=True,
         required=False,
     )
+    manager = serializers.PrimaryKeyRelatedField(
+        queryset=Employee.objects.all(),
+        required=False,
+        allow_null=True,
+    )
+
+    emp_id = serializers.ReadOnlyField(source="user.emp_id")
 
     class Meta:
         model = Employee
         fields = [
             "id",
-            "username",
             "email",
             "emp_id",
             "first_name",
             "last_name",
             "role",
-            "password",
             "contact_number",
             "department_id",
             "manager",
@@ -143,7 +167,7 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
         ]
 
     # =====================================================
-    # ✅ FIELD-LEVEL VALIDATION
+    # FIELD VALIDATION
     # =====================================================
     def validate_first_name(self, value):
         if not re.match(r"^[A-Za-z ]+$", value):
@@ -155,45 +179,20 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Last name must contain only letters and spaces.")
         return value.strip().title()
 
-    def validate_designation(self, value):
-        if not re.match(r"^[A-Za-z ]+$", value):
-            raise serializers.ValidationError("Designation must contain only alphabets (e.g., 'Lead Developer').")
-        return value.strip().title()
-
     def validate_contact_number(self, value):
-        import re
+        """Ensure contact number is valid and unique."""
         pattern = r"^\+91[6-9]\d{9}$"
         if not re.match(pattern, value):
             raise serializers.ValidationError(
                 "Contact number must start with +91 and be a valid 10-digit Indian mobile number."
             )
+
+        qs = Employee.objects.filter(contact_number=value)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("This contact number is already assigned to another employee.")
         return value
-
-
-
-    def validate_username(self, value):
-        qs = User.objects.filter(username__iexact=value)
-        if self.instance:
-            qs = qs.exclude(pk=self.instance.user.id)
-        if qs.exists():
-            raise serializers.ValidationError("Username already exists.")
-        return value.strip()
-
-    def validate_email(self, value):
-        qs = User.objects.filter(email__iexact=value)
-        if self.instance:
-            qs = qs.exclude(pk=self.instance.user.id)
-        if qs.exists():
-            raise serializers.ValidationError("Email already exists.")
-        return value.lower()
-
-    def validate_emp_id(self, value):
-        qs = User.objects.filter(emp_id__iexact=value)
-        if self.instance:
-            qs = qs.exclude(pk=self.instance.user.id)
-        if qs.exists():
-            raise serializers.ValidationError("Employee ID already exists.")
-        return value.upper()
 
     def validate_manager(self, value):
         if value and self.instance and value.id == self.instance.id:
@@ -202,78 +201,43 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Assigned manager must have a Manager role.")
         return value
 
-    def validate_department(self, value):
-        if value and not value.is_active:
-            raise serializers.ValidationError("Cannot assign employees to an inactive department.")
-        return value
-
-    def validate_status(self, value):
-        valid_statuses = ["Active", "On Leave", "Resigned"]
-        if value not in valid_statuses:
-            raise serializers.ValidationError("Invalid employee status.")
-        return value
-
     # =====================================================
-    # ✅ OBJECT-LEVEL VALIDATION (Cross-field Business Rules)
-    # =====================================================
-    def validate(self, data):
-        role = data.get("role")
-        designation = data.get("designation")
-
-        if role == "Manager" and designation and "Manager" not in designation:
-            raise serializers.ValidationError({
-                "designation": "Designation must include 'Manager' for Manager role."
-            })
-        if role == "Employee" and designation and "Manager" in designation:
-            raise serializers.ValidationError({
-                "designation": "Employee role cannot have 'Manager' in designation."
-            })
-
-        return data
-
-    # =====================================================
-    # ✅ CREATE METHOD
+    # CREATE
     # =====================================================
     def create(self, validated_data):
         department = validated_data.pop("department", None)
-        username = validated_data.pop("username")
         email = validated_data.pop("email")
-        emp_id = validated_data.pop("emp_id")
         first_name = validated_data.pop("first_name")
         last_name = validated_data.pop("last_name")
         role = validated_data.pop("role")
-        password = validated_data.pop("password", None) or "admin123"
 
+        # 🔹 Create User (username auto-generated in UserManager)
         user = User.objects.create_user(
-            username=username,
             email=email,
-            emp_id=emp_id,
             first_name=first_name,
             last_name=last_name,
             role=role,
-            password=password,
         )
 
+        # 🔹 Create linked Employee record
         employee = Employee.objects.create(user=user, department=department, **validated_data)
         return employee
 
     # =====================================================
-    # ✅ UPDATE METHOD — Strict Business Logic Enforcement
+    # UPDATE
     # =====================================================
     def update(self, instance, validated_data):
         department = validated_data.pop("department", None)
         if department:
             instance.department = department
 
-        # Update linked User fields
         user = instance.user
-        user_fields = ["username", "email", "emp_id", "first_name", "last_name", "role"]
+        user_fields = ["email", "first_name", "last_name", "role"]
         for field in user_fields:
             if field in validated_data:
                 setattr(user, field, validated_data.pop(field))
         user.save()
 
-        # Update only allowed employee fields
         allowed_fields = {
             "contact_number",
             "manager",

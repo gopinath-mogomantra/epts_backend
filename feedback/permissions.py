@@ -1,37 +1,50 @@
+# ===============================================
 # feedback/permissions.py
+# ===============================================
 from rest_framework import permissions
 
 
+# ===========================================================
+# IsAdminOrManager
+# ===========================================================
 class IsAdminOrManager(permissions.BasePermission):
     """
-    Permission class allowing access only to Admins, Managers, or Superusers.
+    Allows access only to:
+    - Superusers
+    - Admins
+    - Managers
 
-    This assumes that the User model has a `role` field
-    with possible values: "Admin", "Manager", or "Employee".
+    Used for most feedback endpoints to restrict create/update/delete
+    to managerial roles while still allowing authenticated employees
+    to view (if viewset allows it).
     """
 
     def has_permission(self, request, view):
         user = request.user
+
         if not user or not user.is_authenticated:
             return False
-        # Allow Superusers, Admins, and Managers
-        return user.is_superuser or getattr(user, "role", "") in ["Admin", "Manager"]
+
+        user_role = getattr(user, "role", "")
+        return user.is_superuser or user_role in ("Admin", "Manager")
 
 
+# ===========================================================
+# IsCreatorOrAdmin
+# ===========================================================
 class IsCreatorOrAdmin(permissions.BasePermission):
     """
-    Permission class allowing modifications only by:
-    - The user who created the object (`created_by`)
-    - Or an Admin / Superuser.
+    Object-level permission:
+    - Admins and Superusers: full access
+    - Creator (created_by): can update/delete own feedback
+    - Others: read-only (GET, HEAD, OPTIONS)
 
-    Employees can be allowed read-only access (GET, HEAD, OPTIONS)
-    if required by future requirements.
+    Example use: Manager feedback or client feedback updates.
     """
 
     def has_object_permission(self, request, view, obj):
         user = request.user
 
-        # Block anonymous users
         if not user or not user.is_authenticated:
             return False
 
@@ -39,13 +52,13 @@ class IsCreatorOrAdmin(permissions.BasePermission):
         if user.is_superuser or getattr(user, "role", "") == "Admin":
             return True
 
-        # Allow the creator to modify their own records
+        # Allow creator to modify their own feedback
         if hasattr(obj, "created_by") and obj.created_by == user:
             return True
 
-        # Optional: allow read-only access for others
+        # Employees and others can only view (read-only)
         if request.method in permissions.SAFE_METHODS:
             return True
 
-        # Deny others for unsafe methods (POST, PUT, DELETE)
+        # Deny unsafe actions for all others
         return False

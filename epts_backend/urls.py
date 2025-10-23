@@ -50,6 +50,7 @@ urlpatterns = [
     path("api/performance/", include("performance.urls")),
     path("api/feedback/", include("feedback.urls", namespace="feedback")),
     path("api/reports/", include("reports.urls", namespace="reports")),
+    path("api/notifications/", include("notifications.urls", namespace="notifications")),
 ]
 
 # -------------------------------------------------------------------

@@ -1,15 +1,16 @@
 # ===============================================
-# users/views.py (Final Polished Version)
+# users/views.py (Final Version)
 # ===============================================
 
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
 from rest_framework import generics, status, filters
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.decorators import api_view, permission_classes
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from django.shortcuts import get_object_or_404
+from django.utils.crypto import get_random_string
 
 from .serializers import (
     CustomTokenObtainPairSerializer,
@@ -19,7 +20,6 @@ from .serializers import (
 )
 
 User = get_user_model()
-
 
 # =====================================================
 # ✅ 1. LOGIN API (JWT Token Obtain View)
@@ -96,8 +96,19 @@ class ChangePasswordView(APIView):
     def put(self, request, *args, **kwargs):
         serializer = self.serializer_class(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
-        result = serializer.save()
-        return Response(result, status=status.HTTP_200_OK)
+
+        user = request.user
+        old_password = serializer.validated_data.get("old_password")
+        new_password = serializer.validated_data.get("new_password")
+
+        if not user.check_password(old_password):
+            return Response({"error": "Old password is incorrect."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.set_password(new_password)
+        user.force_password_change = False
+        user.save()
+
+        return Response({"message": "Password changed successfully!"}, status=status.HTTP_200_OK)
 
 
 # =====================================================
@@ -130,3 +141,36 @@ class UserListView(generics.ListAPIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
         return super().list(request, *args, **kwargs)
+
+
+# =====================================================
+# ✅ 8. ADMIN RESET PASSWORD API
+# =====================================================
+@api_view(["POST"])
+@permission_classes([IsAdminUser])
+def reset_password(request):
+    emp_id = request.data.get("emp_id")
+
+    if not emp_id:
+        return Response({"error": "emp_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        user = User.objects.get(emp_id=emp_id)
+    except User.DoesNotExist:
+        return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    new_password = get_random_string(
+        length=12,
+        allowed_chars="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+"
+    )
+
+    user.set_password(new_password)
+    user.force_password_change = True
+    user.save()
+
+    return Response({
+        "message": f"Password reset successfully for {user.emp_id}.",
+        "username": user.username,
+        "temp_password": new_password,
+        "force_password_change": True
+    }, status=status.HTTP_200_OK)

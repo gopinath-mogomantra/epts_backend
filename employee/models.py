@@ -1,8 +1,6 @@
 # ===============================================
 # employee/models.py
 # ===============================================
-# Final Updated Version — Safe and Conflict-Free
-# ===============================================
 
 from django.db import models
 from django.utils import timezone
@@ -14,7 +12,7 @@ User = settings.AUTH_USER_MODEL
 
 
 # =====================================================
-# ✅ DEPARTMENT MODEL
+# DEPARTMENT MODEL
 # =====================================================
 class Department(models.Model):
     """Stores all departments in the organization (HR, IT, etc.)"""
@@ -35,7 +33,7 @@ class Department(models.Model):
 
 
 # =====================================================
-# ✅ EMPLOYEE MODEL
+# EMPLOYEE MODEL
 # =====================================================
 class Employee(models.Model):
     """Represents an employee linked to a user account with department, manager, and role details."""
@@ -86,9 +84,10 @@ class Employee(models.Model):
         help_text="Job title or position (e.g., Developer, Team Lead).",
     )
 
-    # 📞 Contact Number Validation: +91 followed by 10 digits
+    # Contact Number Validation: +91 followed by 10 digits
     contact_number = models.CharField(
         max_length=20,
+        unique=True,
         validators=[
             RegexValidator(
                 r"^\+91[6-9]\d{9}$",
@@ -117,7 +116,7 @@ class Employee(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     # -------------------------------------------------
-    # 🔹 Meta Info
+    # Meta Info
     # -------------------------------------------------
     class Meta:
         verbose_name = "Employee"
@@ -130,7 +129,7 @@ class Employee(models.Model):
         ]
 
     # -------------------------------------------------
-    # 🔹 String Representation
+    # String Representation
     # -------------------------------------------------
     def __str__(self):
         """Human-readable representation."""
@@ -142,7 +141,7 @@ class Employee(models.Model):
         return "Unassigned Employee"
 
     # -------------------------------------------------
-    # 🔹 Validation
+    # Validation
     # -------------------------------------------------
     def clean(self):
         """Prevent an employee from being assigned as their own manager."""
@@ -150,7 +149,7 @@ class Employee(models.Model):
             raise ValidationError("An employee cannot be their own manager.")
 
     # -------------------------------------------------
-    # 🔹 Computed Properties
+    # Computed Properties
     # -------------------------------------------------
     @property
     def emp_id(self):

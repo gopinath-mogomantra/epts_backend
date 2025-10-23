@@ -9,7 +9,7 @@ from .models import Employee, Department
 
 
 # =====================================================
-# ✅ DEPARTMENT ADMIN
+# DEPARTMENT ADMIN
 # =====================================================
 @admin.register(Department)
 class DepartmentAdmin(admin.ModelAdmin):
@@ -20,7 +20,7 @@ class DepartmentAdmin(admin.ModelAdmin):
 
 
 # =====================================================
-# ✅ EMPLOYEE ADMIN
+# EMPLOYEE ADMIN
 # =====================================================
 @admin.register(Employee)
 class EmployeeAdmin(admin.ModelAdmin):
@@ -61,7 +61,7 @@ class EmployeeAdmin(admin.ModelAdmin):
     readonly_fields = ("created_at", "updated_at")
 
     # -------------------------------------------------
-    # ✅ Helper display methods
+    # Helper display methods
     # -------------------------------------------------
     def get_full_name(self, obj):
         """Display the user's full name (from linked user)."""
