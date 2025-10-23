@@ -38,107 +38,78 @@ class EmpIDTokenObtainPairSerializer(TokenObtainPairSerializer):
 # =====================================================
 # Custom JWT Token Serializer (Login)
 # =====================================================
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from rest_framework import serializers
-from django.contrib.auth import authenticate
-from users.models import User  # ensure correct import
-
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
-    Extends JWT token with role info, full name, account lockout policy,
-    and force password change on first login.
-      - Locks after 5 failed attempts
-      - Auto unlocks after 2 hours
-      - Shows remaining lock time
-      - Prevents login if password change is required
+    Allows login using either emp_id or username.
+    Handles lockout, force password change, and JWT token generation.
     """
-
-    username_field = "username"
-
-    @classmethod
-    def get_token(cls, user):
-        token = super().get_token(user)
-        token["username"] = user.username
-        token["email"] = user.email
-        token["role"] = user.role
-        token["first_name"] = user.first_name
-        token["last_name"] = user.last_name
-        token["full_name"] = f"{user.first_name} {user.last_name}".strip()
-        token["emp_id"] = user.emp_id
-        token["is_verified"] = user.is_verified
-        token["is_active"] = user.is_active
-        return token
+    username_field = "username"  # keep 'username' in request body
 
     def validate(self, attrs):
-        username = attrs.get("username")
+        login_input = attrs.get("username")
         password = attrs.get("password")
 
+        # Try fetching user by emp_id or username
+        user = None
         try:
-            user = User.objects.get(username=username)
+            if User.objects.filter(emp_id=login_input).exists():
+                user = User.objects.get(emp_id=login_input)
+            elif User.objects.filter(username=login_input).exists():
+                user = User.objects.get(username=login_input)
         except User.DoesNotExist:
+            pass
+
+        # User not found
+        if not user:
             raise serializers.ValidationError({"detail": "Invalid credentials."})
 
-        # --------------------------------------------------
-        # 1️⃣ Check if account is locked
-        # --------------------------------------------------
+        # Check lock status
         if user.account_locked:
-            remaining_time = user.lock_remaining_time()
-            if remaining_time:
-                hours, minutes = remaining_time
+            remaining = user.lock_remaining_time()
+            if remaining:
+                h, m = remaining
                 raise serializers.ValidationError({
-                    "detail": f"Account locked due to multiple failed login attempts. "
-                              f"Try again after {hours} hour(s) and {minutes} minute(s)."
+                    "detail": f"Account locked. Try again after {h}h {m}m."
                 })
             else:
-                # Auto unlock if lock expired
                 user.unlock_account()
 
-        # --------------------------------------------------
-        # 2️⃣ Authenticate user
-        # --------------------------------------------------
-        authenticated_user = authenticate(username=username, password=password)
+        # Authenticate by emp_id (USERNAME_FIELD)
+        authenticated_user = authenticate(username=user.emp_id, password=password)
+
+
         if not authenticated_user:
-            # Increment failed attempts
             user.increment_failed_attempts()
             remaining = max(0, 5 - user.failed_login_attempts)
-
             if user.account_locked:
                 raise serializers.ValidationError({
                     "detail": "Too many failed attempts. Account locked for 2 hours."
                 })
-
             raise serializers.ValidationError({
-                "detail": f"Invalid credentials. {remaining} attempts left before lockout."
+                "detail": f"Invalid credentials. {remaining} attempts left."
             })
 
-        # --------------------------------------------------
-        # 3️⃣ Reset failed attempts on successful login
-        # --------------------------------------------------
+        # Reset attempts after success
         user.reset_login_attempts()
 
-        # --------------------------------------------------
-        # 4️⃣ Enforce password change before allowing login
-        # --------------------------------------------------
+        # Force password change check
         if getattr(user, "force_password_change", False):
             raise serializers.ValidationError({
                 "force_password_change": True,
                 "detail": "You must change your password before logging in."
             })
 
-        # --------------------------------------------------
-        # 5️⃣ Prepare JWT response data
-        # --------------------------------------------------
-        data = super().validate(attrs)
+        # Generate tokens
+        data = super().validate({"username": user.emp_id, "password": password})
         data["user"] = {
             "id": user.id,
+            "emp_id": user.emp_id,
             "username": user.username,
             "email": user.email,
             "first_name": user.first_name,
             "last_name": user.last_name,
-            "full_name": f"{user.first_name} {user.last_name}".strip(),
             "role": user.role,
-            "emp_id": user.emp_id,
             "is_verified": user.is_verified,
             "is_active": user.is_active,
         }
@@ -175,6 +146,10 @@ class RegisterSerializer(serializers.ModelSerializer):
             "joining_date",
         ]
         read_only_fields = ["id", "emp_id"]  # ✅ emp_id is NOT to be provided manually
+
+    def create(self, validated_data):
+        # Auto-generate username and emp_id inside create_user
+        return User.objects.create_user(**validated_data)
 
     def get_full_name(self, obj):
         first = obj.first_name or ""
