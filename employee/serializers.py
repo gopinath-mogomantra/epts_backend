@@ -170,6 +170,7 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
         return value
 
 
+
     def validate_username(self, value):
         qs = User.objects.filter(username__iexact=value)
         if self.instance:
