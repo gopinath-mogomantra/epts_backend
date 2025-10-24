@@ -57,7 +57,7 @@ class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
         return qs
 
     # ------------------------------------------------------
-    # ✅ CREATE (Now Supports emp_id, evaluator_id, dept_code)
+    # ✅ CREATE (Supports emp_id, dept_code auto-detection)
     # ------------------------------------------------------
     def create(self, request, *args, **kwargs):
         role = getattr(request.user, "role", "").lower()
@@ -71,7 +71,7 @@ class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         try:
-            instance = serializer.save()
+            instance = serializer.save(evaluator=request.user)
         except IntegrityError:
             return Response(
                 {"error": "Performance for this week already exists."},
@@ -141,14 +141,16 @@ class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
 
 
 # ==========================================================
-# ✅ PERFORMANCE SUMMARY (Top 3 / Weak 3 / Dept Summary)
+# ✅ PERFORMANCE SUMMARY (Leaderboard + Department Ranking)
 # ==========================================================
 class PerformanceSummaryView(APIView):
     """
-    Provides weekly summary insights:
-    - Top 3 performers
-    - Weak 3 performers
-    - Department averages and top performers
+    Weekly summary with optional rankings and department leaderboard.
+
+    Query params:
+      - include_rankings=true   -> include `leaderboard` and `department_ranking`
+      - compare_previous=true   -> include change vs previous week (optional)
+      - top_n=<int>             -> limit leaderboard size (default 10)
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -162,57 +164,43 @@ class PerformanceSummaryView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        # Latest year/week
         latest_year = PerformanceEvaluation.objects.aggregate(max_year=Max("year"))["max_year"]
+        if not latest_year:
+            return Response({"message": "No performance records available."}, status=status.HTTP_200_OK)
+
         latest_week = (
             PerformanceEvaluation.objects.filter(year=latest_year)
             .aggregate(max_week=Max("week_number"))["max_week"]
         )
-
         if not latest_week:
             return Response({"message": "No performance records available."}, status=status.HTTP_200_OK)
 
-        # Fetch current week data
-        latest_evals = PerformanceEvaluation.objects.filter(
+        # Base data
+        latest_qs = PerformanceEvaluation.objects.filter(
             year=latest_year, week_number=latest_week
         ).select_related("employee__user", "department")
 
-        ranked_evals = latest_evals.annotate(
-            computed_rank=Window(expression=Rank(), order_by=F("total_score").desc())
-        ).order_by("computed_rank")
-
-        # Top 3 and Weak 3
-        top_3 = list(ranked_evals[:3])
-        weak_3 = list(latest_evals.order_by("total_score")[:3])
-
-        def serialize(emp):
-            u = emp.employee.user
-            return {
-                "emp_id": u.emp_id,
-                "employee_name": f"{u.first_name} {u.last_name}".strip(),
-                "department": emp.department.name if emp.department else "N/A",
-                "total_score": emp.total_score,
-                "average_score": emp.average_score,
-                "evaluation_type": emp.evaluation_type,
-                "review_date": emp.review_date,
-                "rank": getattr(emp, "computed_rank", None),
-            }
-
-        dept_avg = round(latest_evals.aggregate(Avg("average_score"))["average_score__avg"] or 0, 2)
-        dept_summary_qs = (
-            latest_evals.values("department__name")
+        # Department averages
+        dept_qs = (
+            latest_qs.values("department__id", "department__name")
             .annotate(avg_score=Avg("average_score"))
-            .order_by("department__name")
+            .order_by("-avg_score")
         )
 
         department_summary = []
-        for d in dept_summary_qs:
+        for d in dept_qs:
             dept_name = d["department__name"] or "N/A"
+            avg_score = round(d["avg_score"] or 0, 2)
             top_in_dept = (
-                latest_evals.filter(department__name=dept_name).order_by("-total_score").first()
+                latest_qs.filter(department__name=dept_name)
+                .order_by("-total_score")
+                .select_related("employee__user")
+                .first()
             )
             department_summary.append({
                 "department": dept_name,
-                "avg_score": round(d["avg_score"] or 0, 2),
+                "avg_score": avg_score,
                 "top_performer": (
                     f"{top_in_dept.employee.user.first_name} {top_in_dept.employee.user.last_name}".strip()
                     if top_in_dept and hasattr(top_in_dept, "employee")
@@ -220,16 +208,80 @@ class PerformanceSummaryView(APIView):
                 ),
             })
 
-        return Response(
-            {
-                "evaluation_period": f"Week {latest_week}, {latest_year}",
-                "department_average": dept_avg,
-                "department_summary": department_summary,
-                "top_performers": [serialize(e) for e in top_3],
-                "weak_performers": [serialize(e) for e in weak_3],
-            },
-            status=status.HTTP_200_OK,
-        )
+        response_payload = {
+            "evaluation_period": f"Week {latest_week}, {latest_year}",
+            "department_average": round(latest_qs.aggregate(Avg("average_score"))["average_score__avg"] or 0, 2),
+            "department_summary": department_summary,
+        }
+
+        # Leaderboard + Department Ranking
+        include_rankings = request.query_params.get("include_rankings", "false").lower() == "true"
+        if include_rankings:
+            ranked_qs = latest_qs.annotate(
+                computed_rank=Window(expression=Rank(), order_by=F("total_score").desc())
+            ).order_by("computed_rank", "-total_score")
+
+            top_n = int(request.query_params.get("top_n", 10))
+            leaderboard = []
+            for r in ranked_qs[:top_n]:
+                u = r.employee.user
+                leaderboard.append({
+                    "rank": getattr(r, "computed_rank", None),
+                    "emp_id": u.emp_id,
+                    "name": f"{u.first_name} {u.last_name}".strip(),
+                    "department": r.department.name if r.department else None,
+                    "total_score": r.total_score,
+                    "average_score": r.average_score,
+                    "evaluation_type": r.evaluation_type,
+                    "review_date": r.review_date,
+                })
+
+            department_ranking = []
+            for idx, d in enumerate(dept_qs):
+                department_ranking.append({
+                    "department": d["department__name"] or "N/A",
+                    "avg_score": round(d["avg_score"] or 0, 2),
+                    "department_rank": idx + 1,
+                })
+
+            response_payload["leaderboard"] = leaderboard
+            response_payload["department_ranking"] = department_ranking
+
+        # Optional compare previous week
+        if request.query_params.get("compare_previous", "false").lower() == "true":
+            prev_week = latest_week - 1
+            prev_year = latest_year
+            if prev_week <= 0:
+                prev_year = latest_year - 1
+                prev_week = (
+                    PerformanceEvaluation.objects.filter(year=prev_year)
+                    .aggregate(max_week=Max("week_number"))["max_week"]
+                    or 0
+                )
+
+            prev_qs = PerformanceEvaluation.objects.filter(year=prev_year, week_number=prev_week)
+            prev_dept_avgs = {
+                x["department__name"] or "N/A": float(x["avg_score"] or 0)
+                for x in prev_qs.values("department__name").annotate(avg_score=Avg("average_score"))
+            }
+
+            for d in response_payload["department_summary"]:
+                prev_avg = prev_dept_avgs.get(d["department"], 0)
+                change = None
+                if prev_avg:
+                    try:
+                        change = round(((d["avg_score"] - prev_avg) / prev_avg) * 100, 2)
+                    except Exception:
+                        change = None
+                d["previous_week_avg"] = round(prev_avg, 2)
+                d["change_percent_vs_previous_week"] = change
+
+            response_payload["previous_week"] = {
+                "week_number": prev_week,
+                "year": prev_year,
+            }
+
+        return Response(response_payload, status=status.HTTP_200_OK)
 
 
 # ==========================================================
@@ -261,10 +313,7 @@ class EmployeeDashboardView(APIView):
 
         avg_score = round(evaluations.aggregate(Avg("average_score"))["average_score__avg"] or 0, 2)
         best = evaluations.order_by("-total_score").first()
-
-        trend_data = list(
-            evaluations.values("week_number", "average_score").order_by("week_number")
-        )
+        trend_data = list(evaluations.values("week_number", "average_score").order_by("week_number"))
 
         serializer = PerformanceDashboardSerializer(evaluations, many=True, context={"request": request})
 

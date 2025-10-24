@@ -302,7 +302,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         # --- Defensive Import ---
         try:
             from attendance.models import Attendance
-        except Exception:
+        except ImportError:
             Attendance = None
         try:
             from feedback.models import Feedback
