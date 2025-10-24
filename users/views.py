@@ -1,5 +1,5 @@
 # ===============================================
-# users/views.py  (Final Synced Version)
+# users/views.py  (Updated / Fixed - Combined ChangePasswordView)
 # ===============================================
 
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
@@ -8,14 +8,13 @@ from rest_framework import generics, status, filters
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.decorators import api_view, permission_classes
-from django.contrib.auth import get_user_model
+from django.contrib.auth import get_user_model, authenticate
 from django.utils import timezone
 from django.utils.crypto import get_random_string
 
 from .serializers import (
     CustomTokenObtainPairSerializer,
     RegisterSerializer,
-    ChangePasswordSerializer,
     ProfileSerializer,
 )
 
@@ -79,42 +78,93 @@ class RegisterView(generics.CreateAPIView):
 
 
 # =====================================================
-# ✅ 4. USER PROFILE (Self)
-# =====================================================
-class ProfileView(APIView):
-    """Return authenticated user's profile."""
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        user = request.user
-        if not user.is_active:
-            return Response(
-                {"error": "Your account is inactive."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        return Response(ProfileSerializer(user).data, status=status.HTTP_200_OK)
-
-
-# =====================================================
-# ✅ 5. CHANGE PASSWORD
+# ✅ 4. CHANGE / FIRST-TIME PASSWORD (Combined)
 # =====================================================
 class ChangePasswordView(APIView):
     """
-    Allows logged-in user to change password.
-    Automatically clears the 'force_password_change' flag.
+    Single endpoint to handle both:
+    1) First-time password change (user has temp password -> provide username + old_password)
+    2) Authenticated password change (user sends Bearer token)
+    Use:
+      POST /api/users/change-password/
+    Payload (first-time):
+      {
+        "username": "EMP0001",
+        "old_password": "tempPass123",
+        "new_password": "NewStrongPass@123",
+        "confirm_password": "NewStrongPass@123"
+      }
+    Payload (authenticated):
+      {
+        "old_password": "currentPass",
+        "new_password": "NewStrongPass@123",
+        "confirm_password": "NewStrongPass@123"
+      }
     """
-    permission_classes = [IsAuthenticated]
-    serializer_class = ChangePasswordSerializer
+    permission_classes = [AllowAny]  # we will handle auth logic internally
 
-    def put(self, request, *args, **kwargs):
-        serializer = self.serializer_class(data=request.data, context={"request": request})
-        serializer.is_valid(raise_exception=True)
-        result = serializer.save()
-        return Response(result, status=status.HTTP_200_OK)
+    def post(self, request, *args, **kwargs):
+        """
+        Accepts either:
+        - username + old_password (useful for first-time password reset when force_password_change=True), OR
+        - Authorization: Bearer <token> header (authenticated user).
+        """
+        username = request.data.get("username")
+        old_password = request.data.get("old_password")
+        new_password = request.data.get("new_password")
+        confirm_password = request.data.get("confirm_password")
+
+        # Basic validation for new passwords
+        if not new_password or not confirm_password:
+            return Response({"detail": "New password and confirm password are required."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if new_password != confirm_password:
+            return Response({"detail": "New passwords do not match."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = None
+
+        # Case A: username + old_password provided -> try to authenticate (first-time or username-based change)
+        if username and old_password:
+            user = authenticate(username=username, password=old_password)
+            if not user:
+                return Response({"detail": "Invalid username or old password."}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            # Case B: try to use authenticated user via token
+            if request.user and request.user.is_authenticated:
+                user = request.user
+                # For safety, require old_password in authenticated flow as well (optional, but recommended)
+                # If you want to allow changing without providing old_password (e.g., admin forced flow), you can adjust here.
+                if not old_password:
+                    return Response({"detail": "Old password is required for authenticated password change."},
+                                    status=status.HTTP_400_BAD_REQUEST)
+                if not user.check_password(old_password):
+                    return Response({"detail": "Old password is incorrect."}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                # No username/old_password and no valid token
+                return Response({"detail": "Authentication credentials were not provided."},
+                                status=status.HTTP_401_UNAUTHORIZED)
+
+        # At this point 'user' is valid
+        user.set_password(new_password)
+        # Clear force_password_change flag (covers first-time flow)
+        user.force_password_change = False
+        user.save(update_fields=["password", "force_password_change"])
+
+        return Response({"message": "Password changed successfully!"}, status=status.HTTP_200_OK)
+
+
+class ProfileView(APIView):
+    """Return current user's profile info."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        serializer = ProfileSerializer(request.user)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 # =====================================================
-# ✅ 6. ROLE LIST
+# ✅ 5. ROLE LIST
 # =====================================================
 class RoleListView(APIView):
     """Return available user roles."""
@@ -126,7 +176,7 @@ class RoleListView(APIView):
 
 
 # =====================================================
-# ✅ 7. USER LIST (Admin Only)
+# ✅ 6. USER LIST (Admin Only)
 # =====================================================
 class UserListView(generics.ListAPIView):
     """List all users (Admins only)."""
@@ -148,7 +198,7 @@ class UserListView(generics.ListAPIView):
 
 
 # =====================================================
-# ✅ 8. ADMIN RESET PASSWORD
+# ✅ 7. ADMIN RESET PASSWORD
 # =====================================================
 @api_view(["POST"])
 @permission_classes([IsAdminUser])
@@ -173,7 +223,7 @@ def reset_password(request):
 
     user.set_password(new_password)
     user.force_password_change = True
-    user.save()
+    user.save(update_fields=["password", "force_password_change"])
 
     return Response(
         {
