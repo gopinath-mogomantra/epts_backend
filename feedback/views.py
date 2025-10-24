@@ -1,5 +1,5 @@
 # ===============================================
-# feedback/views.py 
+# feedback/views.py (Final Synced Version)
 # ===============================================
 
 from rest_framework import viewsets, permissions, filters, status
@@ -13,22 +13,22 @@ from .serializers import (
     ManagerFeedbackSerializer,
     ClientFeedbackSerializer,
 )
-from .permissions import IsAdminOrManager, IsCreatorOrAdmin
+from .permissions import IsAdminOrManager
 
 
 # ==============================================================
-# GENERAL FEEDBACK
+# ✅ GENERAL FEEDBACK VIEWSET
 # ==============================================================
 class GeneralFeedbackViewSet(viewsets.ModelViewSet):
     """
     Handles General Feedback operations:
     - Admins and Managers can view, create, and update feedback.
-    - Linked to employee and department details.
+    - Automatically triggers notifications to employees.
     """
 
     queryset = GeneralFeedback.objects.select_related(
         "employee__user", "department", "created_by"
-    )
+    ).all()
     serializer_class = GeneralFeedbackSerializer
     permission_classes = [permissions.IsAuthenticated, IsAdminOrManager]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
@@ -37,30 +37,33 @@ class GeneralFeedbackViewSet(viewsets.ModelViewSet):
     ordering = ["-created_at"]
 
     def perform_create(self, serializer):
-        """Automatically set the creator of the feedback and trigger notification."""
+        """Attach creator and trigger notification."""
         instance = serializer.save(created_by=self.request.user)
 
-        # 🔔 Notification Trigger
-        Notification.objects.create(
-            employee=instance.employee.user,
-            message=f"New general feedback has been added for you on {instance.feedback_date}.",
-            auto_delete=False
-        )
+        try:
+            Notification.objects.create(
+                employee=instance.employee.user,
+                message=f"📝 New general feedback added on {instance.feedback_date}.",
+                auto_delete=False,
+            )
+        except Exception:
+            pass
 
 
 # ==============================================================
-# MANAGER FEEDBACK
+# ✅ MANAGER FEEDBACK VIEWSET
 # ==============================================================
 class ManagerFeedbackViewSet(viewsets.ModelViewSet):
     """
     Handles Manager Feedback:
-    - Managers can create feedback for their team/subordinates.
-    - Admins and Superusers can view all.
+    - Managers: can create for their team members
+    - Admins/Superusers: can view all
+    - Employees: can view only public feedback
     """
 
     queryset = ManagerFeedback.objects.select_related(
         "employee__user", "department", "created_by"
-    )
+    ).all()
     serializer_class = ManagerFeedbackSerializer
     permission_classes = [permissions.IsAuthenticated, IsAdminOrManager]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
@@ -69,48 +72,47 @@ class ManagerFeedbackViewSet(viewsets.ModelViewSet):
     ordering = ["-created_at"]
 
     def get_queryset(self):
-        """Restrict feedback visibility based on user role."""
+        """Restrict visibility by user role."""
         user = self.request.user
         qs = super().get_queryset()
 
         if user.is_superuser or getattr(user, "role", "") == "Admin":
             return qs
-
         if getattr(user, "role", "") == "Manager":
             return qs.filter(Q(created_by=user) | Q(employee__manager__user=user)).distinct()
-
         if getattr(user, "role", "") == "Employee":
             return qs.filter(employee__user=user, visibility="Public")
-
         return qs.none()
 
     def perform_create(self, serializer):
-        """Assign manager_name, created_by, and send notification."""
+        """Auto-assign manager_name and trigger notification."""
         manager_name = f"{self.request.user.first_name} {self.request.user.last_name}".strip()
         instance = serializer.save(created_by=self.request.user, manager_name=manager_name)
 
-        # Notification Trigger
-        Notification.objects.create(
-            employee=instance.employee.user,
-            message=f"Your manager {manager_name} added new feedback on {instance.feedback_date}.",
-            auto_delete=False
-        )
+        try:
+            Notification.objects.create(
+                employee=instance.employee.user,
+                message=f"📋 Manager {manager_name} added feedback on {instance.feedback_date}.",
+                auto_delete=False,
+            )
+        except Exception:
+            pass
 
 
 # ==============================================================
-# CLIENT FEEDBACK
+# ✅ CLIENT FEEDBACK VIEWSET
 # ==============================================================
 class ClientFeedbackViewSet(viewsets.ModelViewSet):
     """
     Handles Client Feedback:
-    - Admins and Managers can view all.
-    - Authenticated users can submit feedback.
-    - Employees can view only public client feedback.
+    - Admins/Managers: can view all
+    - Employees: view only public feedback related to them
+    - Authenticated clients: can create
     """
 
     queryset = ClientFeedback.objects.select_related(
         "employee__user", "department", "created_by"
-    )
+    ).all()
     serializer_class = ClientFeedbackSerializer
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
@@ -119,39 +121,39 @@ class ClientFeedbackViewSet(viewsets.ModelViewSet):
     ordering = ["-created_at"]
 
     def get_queryset(self):
-        """Filter visibility and access by user role."""
+        """Role-based visibility control."""
         user = self.request.user
         qs = super().get_queryset()
 
         if user.is_superuser or getattr(user, "role", "") == "Admin":
             return qs
-
         if getattr(user, "role", "") == "Manager":
             return qs.filter(visibility="Public")
-
         if getattr(user, "role", "") == "Employee":
             return qs.filter(employee__user=user, visibility="Public")
-
         return qs.none()
 
     def perform_create(self, serializer):
-        """Automatically set created_by, client_name, and send notification."""
+        """Auto-fill client_name and trigger notification."""
         client_name = getattr(self.request.user, "username", None) or "Client"
         instance = serializer.save(created_by=self.request.user, client_name=client_name)
 
-        # Notification Trigger
-        Notification.objects.create(
-            employee=instance.employee.user,
-            message=f"New client feedback received from {client_name} on {instance.feedback_date}.",
-            auto_delete=False
-        )
+        try:
+            Notification.objects.create(
+                employee=instance.employee.user,
+                message=f"💬 Client feedback received from {client_name} on {instance.feedback_date}.",
+                auto_delete=False,
+            )
+        except Exception:
+            pass
 
 
 # ==============================================================
-# MY FEEDBACK (Employee Dashboard View)
+# ✅ MY FEEDBACK (EMPLOYEE DASHBOARD)
 # ==============================================================
 class MyFeedbackView(APIView):
     """
+    Employee Dashboard View:
     Shows all feedback (General, Manager, Client) for the logged-in employee.
     """
 
@@ -168,7 +170,7 @@ class MyFeedbackView(APIView):
 
         general_feedback = GeneralFeedback.objects.filter(employee__user=user)
         manager_feedback = ManagerFeedback.objects.filter(employee__user=user)
-        client_feedback = ClientFeedback.objects.filter(employee__user=user)
+        client_feedback = ClientFeedback.objects.filter(employee__user=user, visibility="Public")
 
         data = {
             "general_feedback": GeneralFeedbackSerializer(general_feedback, many=True).data,

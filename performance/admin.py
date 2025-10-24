@@ -1,5 +1,5 @@
 # ===============================================
-# performance/admin.py
+# performance/admin.py (Final Verified Version)
 # ===============================================
 # Django Admin configuration for Performance Evaluation module
 # ===============================================
@@ -12,12 +12,11 @@ from .models import PerformanceEvaluation
 class PerformanceEvaluationAdmin(admin.ModelAdmin):
     """
     Admin interface for viewing and managing employee performance evaluations.
-    Provides search, filtering, and read-only scoring.
+    Provides search, filtering, and read-only scoring fields.
     """
 
     # Fields displayed in the list view
     list_display = (
-        "id",
         "get_emp_id",
         "get_employee_name",
         "department",
@@ -27,10 +26,9 @@ class PerformanceEvaluationAdmin(admin.ModelAdmin):
         "week_number",
         "year",
         "review_date",
-        "created_at",
     )
 
-    # Filters for sidebar filtering
+    # Filters for quick navigation
     list_filter = (
         "evaluation_type",
         "department",
@@ -38,7 +36,7 @@ class PerformanceEvaluationAdmin(admin.ModelAdmin):
         "week_number",
     )
 
-    # Fields that can be searched in admin
+    # Searchable fields
     search_fields = (
         "employee__user__emp_id",
         "employee__user__first_name",
@@ -48,22 +46,28 @@ class PerformanceEvaluationAdmin(admin.ModelAdmin):
         "evaluation_type",
     )
 
-    # Default ordering (most recent first)
+    # Default ordering
     ordering = ("-review_date", "-created_at")
 
-    # Make computed fields read-only
+    # Read-only system fields
     readonly_fields = ("total_score", "average_score", "created_at", "updated_at")
 
+    # -------------------------------------------------
     # Custom display methods
+    # -------------------------------------------------
     def get_emp_id(self, obj):
-        """Fetch Employee ID from linked user."""
-        return getattr(obj.employee.user, "emp_id", "-") if obj.employee and obj.employee.user else "-"
-    get_emp_id.short_description = "Emp ID"
+        """Display Employee ID (from linked User)."""
+        if obj.employee and obj.employee.user:
+            return getattr(obj.employee.user, "emp_id", "-")
+        return "-"
+    get_emp_id.short_description = "Employee ID"
 
     def get_employee_name(self, obj):
-        """Return the employee's full name."""
+        """Display Employee full name."""
         if obj.employee and obj.employee.user:
-            full_name = f"{obj.employee.user.first_name} {obj.employee.user.last_name}".strip()
+            first = obj.employee.user.first_name or ""
+            last = obj.employee.user.last_name or ""
+            full_name = f"{first} {last}".strip()
             return full_name or obj.employee.user.username
-        return "Unknown"
+        return "-"
     get_employee_name.short_description = "Employee Name"

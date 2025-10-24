@@ -1,5 +1,5 @@
 # ===============================================
-# users/views.py (Final Version)
+# users/views.py  (Final Synced Version)
 # ===============================================
 
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
@@ -21,11 +21,13 @@ from .serializers import (
 
 User = get_user_model()
 
+
 # =====================================================
 # ✅ 1. LOGIN API (JWT Token Obtain View)
 # =====================================================
 class ObtainTokenPairView(TokenObtainPairView):
-    permission_classes = (AllowAny,)
+    """Authenticate user and issue JWT tokens."""
+    permission_classes = [AllowAny]
     serializer_class = CustomTokenObtainPairSerializer
 
 
@@ -33,20 +35,26 @@ class ObtainTokenPairView(TokenObtainPairView):
 # ✅ 2. REFRESH TOKEN API
 # =====================================================
 class RefreshTokenView(TokenRefreshView):
-    permission_classes = (AllowAny,)
+    """Refresh JWT token using valid refresh token."""
+    permission_classes = [AllowAny]
 
 
 # =====================================================
 # ✅ 3. USER REGISTRATION (Admin / Superuser Only)
 # =====================================================
 class RegisterView(generics.CreateAPIView):
+    """
+    Allows Admins or Superusers to register a new user.
+    - emp_id is auto-generated
+    - joining_date auto-filled if missing
+    """
     queryset = User.objects.all()
     serializer_class = RegisterSerializer
     permission_classes = [IsAuthenticated]
 
     def create(self, request, *args, **kwargs):
-        user = request.user
-        if not (user.is_superuser or getattr(user, "role", None) == "Admin"):
+        current_user = request.user
+        if not (current_user.is_superuser or getattr(current_user, "role", None) == "Admin"):
             return Response(
                 {"error": "Only Admins or Superusers can create new users."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -56,6 +64,7 @@ class RegisterView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         new_user = serializer.save()
 
+        # Auto-fill joining date if not provided
         if not getattr(new_user, "joining_date", None):
             new_user.joining_date = timezone.now().date()
             new_user.save(update_fields=["joining_date"])
@@ -70,9 +79,10 @@ class RegisterView(generics.CreateAPIView):
 
 
 # =====================================================
-# ✅ 4. USER PROFILE API (Self)
+# ✅ 4. USER PROFILE (Self)
 # =====================================================
 class ProfileView(APIView):
+    """Return authenticated user's profile."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -82,50 +92,44 @@ class ProfileView(APIView):
                 {"error": "Your account is inactive."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        serializer = ProfileSerializer(user)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(ProfileSerializer(user).data, status=status.HTTP_200_OK)
 
 
 # =====================================================
-# ✅ 5. CHANGE PASSWORD API
+# ✅ 5. CHANGE PASSWORD
 # =====================================================
 class ChangePasswordView(APIView):
+    """
+    Allows logged-in user to change password.
+    Automatically clears the 'force_password_change' flag.
+    """
     permission_classes = [IsAuthenticated]
     serializer_class = ChangePasswordSerializer
 
     def put(self, request, *args, **kwargs):
         serializer = self.serializer_class(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
-
-        user = request.user
-        old_password = serializer.validated_data.get("old_password")
-        new_password = serializer.validated_data.get("new_password")
-
-        if not user.check_password(old_password):
-            return Response({"error": "Old password is incorrect."}, status=status.HTTP_400_BAD_REQUEST)
-
-        user.set_password(new_password)
-        user.force_password_change = False
-        user.save()
-
-        return Response({"message": "Password changed successfully!"}, status=status.HTTP_200_OK)
+        result = serializer.save()
+        return Response(result, status=status.HTTP_200_OK)
 
 
 # =====================================================
-# ✅ 6. ROLE LIST API
+# ✅ 6. ROLE LIST
 # =====================================================
 class RoleListView(APIView):
+    """Return available user roles."""
     permission_classes = [AllowAny]
 
     def get(self, request):
-        roles = [r[0] for r in User.ROLE_CHOICES]
+        roles = [role for role, _ in User.ROLE_CHOICES]
         return Response({"roles": roles}, status=status.HTTP_200_OK)
 
 
 # =====================================================
-# ✅ 7. ADMIN-ONLY: USER LIST API
+# ✅ 7. USER LIST (Admin Only)
 # =====================================================
 class UserListView(generics.ListAPIView):
+    """List all users (Admins only)."""
     queryset = User.objects.all().order_by("emp_id")
     serializer_class = ProfileSerializer
     permission_classes = [IsAuthenticated]
@@ -144,13 +148,16 @@ class UserListView(generics.ListAPIView):
 
 
 # =====================================================
-# ✅ 8. ADMIN RESET PASSWORD API
+# ✅ 8. ADMIN RESET PASSWORD
 # =====================================================
 @api_view(["POST"])
 @permission_classes([IsAdminUser])
 def reset_password(request):
+    """
+    Admins can reset any user's password.
+    Generates a new temporary password and sets force_password_change=True.
+    """
     emp_id = request.data.get("emp_id")
-
     if not emp_id:
         return Response({"error": "emp_id is required."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -168,9 +175,12 @@ def reset_password(request):
     user.force_password_change = True
     user.save()
 
-    return Response({
-        "message": f"Password reset successfully for {user.emp_id}.",
-        "username": user.username,
-        "temp_password": new_password,
-        "force_password_change": True
-    }, status=status.HTTP_200_OK)
+    return Response(
+        {
+            "message": f"✅ Password reset successfully for {user.emp_id}.",
+            "username": user.username,
+            "temp_password": new_password,
+            "force_password_change": True,
+        },
+        status=status.HTTP_200_OK,
+    )

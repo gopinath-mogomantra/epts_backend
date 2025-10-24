@@ -1,8 +1,10 @@
 # ===============================================
-# reports/models.py (Final Updated Version)
+# reports/models.py (Final Production Version)
 # ===============================================
+
 from django.db import models
 from django.conf import settings
+from django.utils import timezone
 
 
 class CachedReport(models.Model):
@@ -18,13 +20,19 @@ class CachedReport(models.Model):
         ("department", "Department-wise Report"),
     ]
 
-    # 🔹 Report Info
-    report_type = models.CharField(max_length=20, choices=REPORT_TYPE_CHOICES)
-    year = models.PositiveSmallIntegerField(help_text="Report year")
-    week_number = models.PositiveSmallIntegerField(null=True, blank=True, help_text="Week number (for weekly/manager/department reports)")
-    month = models.PositiveSmallIntegerField(null=True, blank=True, help_text="Month number (for monthly reports)")
+    # 🔹 Report Identification
+    report_type = models.CharField(
+        max_length=20, choices=REPORT_TYPE_CHOICES, help_text="Type of report (weekly, monthly, etc.)"
+    )
+    year = models.PositiveSmallIntegerField(help_text="Report year (e.g., 2025)")
+    week_number = models.PositiveSmallIntegerField(
+        null=True, blank=True, help_text="Week number (for weekly, manager, department reports)"
+    )
+    month = models.PositiveSmallIntegerField(
+        null=True, blank=True, help_text="Month number (for monthly reports)"
+    )
 
-    # 🔹 Relationships (optional links for filtering)
+    # 🔹 Relationships (optional filters)
     manager = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -33,7 +41,6 @@ class CachedReport(models.Model):
         related_name="manager_reports",
         help_text="Manager for manager-wise reports",
     )
-
     department = models.ForeignKey(
         "employee.Department",
         on_delete=models.SET_NULL,
@@ -43,11 +50,13 @@ class CachedReport(models.Model):
         help_text="Department for department-wise reports",
     )
 
-    # 🔹 Stored Report Data
-    payload = models.JSONField(help_text="Cached JSON data (aggregated summary and metrics)")
+    # 🔹 Cached Data
+    payload = models.JSONField(
+        help_text="Cached JSON data (aggregated summary, KPIs, and metrics)"
+    )
 
     # 🔹 Metadata
-    generated_at = models.DateTimeField(auto_now_add=True)
+    generated_at = models.DateTimeField(default=timezone.now, help_text="Timestamp when report was generated")
     generated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -56,26 +65,31 @@ class CachedReport(models.Model):
         related_name="cached_reports",
         help_text="User or system that generated this report",
     )
-
     file_path = models.FileField(
         upload_to="reports/",
         null=True,
         blank=True,
-        help_text="Optional stored PDF/Excel file path",
+        help_text="Optional stored PDF or Excel file path",
     )
-
     is_active = models.BooleanField(default=True, help_text="Mark report as active or archived")
 
     class Meta:
         ordering = ["-generated_at"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["report_type", "year", "week_number", "month", "manager", "department"],
-                name="unique_cached_report_per_period",
-            ),
-        ]
         verbose_name = "Cached Report"
         verbose_name_plural = "Cached Reports"
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    "report_type",
+                    "year",
+                    "week_number",
+                    "month",
+                    "manager",
+                    "department",
+                ],
+                name="unique_cached_report_per_period",
+            )
+        ]
         indexes = [
             models.Index(fields=["year"]),
             models.Index(fields=["week_number"]),
@@ -83,22 +97,35 @@ class CachedReport(models.Model):
             models.Index(fields=["report_type"]),
         ]
 
+    # ------------------------------------------------------------
+    # Helper Methods
+    # ------------------------------------------------------------
     def __str__(self):
-        """Readable string for admin / logs."""
+        """Readable representation for admin & logs."""
         if self.report_type == "weekly" and self.week_number:
-            return f"Weekly Report - Week {self.week_number}, {self.year}"
+            return f"📅 Weekly Report — Week {self.week_number}, {self.year}"
         elif self.report_type == "monthly" and self.month:
-            return f"Monthly Report - {self.month}/{self.year}"
+            return f"📊 Monthly Report — Month {self.month}, {self.year}"
         elif self.report_type == "manager" and self.manager:
-            return f"Manager Report - {self.manager.get_full_name()} (Week {self.week_number}, {self.year})"
+            return f"👨‍💼 Manager Report — {self.manager.get_full_name()} (Week {self.week_number}, {self.year})"
         elif self.report_type == "department" and self.department:
-            return f"Department Report - {self.department.name} (Week {self.week_number}, {self.year})"
+            return f"🏢 Department Report — {self.department.name} (Week {self.week_number}, {self.year})"
         return f"{self.report_type.title()} Report ({self.year})"
 
     def get_period_display(self):
-        """Return a formatted display string for UI/report labels."""
+        """Return a formatted label for report period."""
         if self.report_type in ["weekly", "manager", "department"] and self.week_number:
             return f"Week {self.week_number}, {self.year}"
         elif self.report_type == "monthly" and self.month:
             return f"Month {self.month}, {self.year}"
         return str(self.year)
+
+    def soft_delete(self):
+        """Archive report without losing historical data."""
+        self.is_active = False
+        self.save(update_fields=["is_active"])
+
+    def restore(self):
+        """Re-activate a previously archived report."""
+        self.is_active = True
+        self.save(update_fields=["is_active"])

@@ -1,5 +1,5 @@
 # ===============================================
-# employee/admin.py
+# employee/admin.py (Final Verified Version)
 # ===============================================
 # Django Admin configuration for Employee and Department models
 # ===============================================
@@ -9,10 +9,11 @@ from .models import Employee, Department
 
 
 # =====================================================
-# DEPARTMENT ADMIN
+# 🔹 DEPARTMENT ADMIN
 # =====================================================
 @admin.register(Department)
 class DepartmentAdmin(admin.ModelAdmin):
+    """Admin configuration for Department model."""
     list_display = ("id", "name", "description", "is_active", "created_at")
     search_fields = ("name", "description")
     list_filter = ("is_active",)
@@ -20,7 +21,7 @@ class DepartmentAdmin(admin.ModelAdmin):
 
 
 # =====================================================
-# EMPLOYEE ADMIN
+# 🔹 EMPLOYEE ADMIN
 # =====================================================
 @admin.register(Employee)
 class EmployeeAdmin(admin.ModelAdmin):
@@ -29,20 +30,16 @@ class EmployeeAdmin(admin.ModelAdmin):
     Displays key employee info, supports searching and filtering.
     """
 
-    # Display key fields in the Employee list page
     list_display = (
-        "id",
-        "emp_id",
+        "get_emp_id",
         "get_full_name",
-        "email",
+        "get_email",
         "department",
         "designation",
-        "role",
+        "get_role",
         "status",
         "joining_date",
     )
-
-    # Enable search on useful text fields
     search_fields = (
         "user__emp_id",
         "user__first_name",
@@ -50,37 +47,32 @@ class EmployeeAdmin(admin.ModelAdmin):
         "user__email",
         "designation",
     )
-
-    # Filters for quick navigation
     list_filter = ("department", "status", "joining_date")
-
-    # Order employees alphabetically by user first name
     ordering = ("user__first_name",)
-
-    # Make related user fields readable
     readonly_fields = ("created_at", "updated_at")
 
     # -------------------------------------------------
     # Helper display methods
     # -------------------------------------------------
     def get_full_name(self, obj):
-        """Display the user's full name (from linked user)."""
+        """Return the full name of the employee (from linked user)."""
         if obj.user:
-            return f"{obj.user.first_name} {obj.user.last_name}".strip() or obj.user.username
+            full_name = f"{obj.user.first_name} {obj.user.last_name}".strip()
+            return full_name or obj.user.username
         return "-"
     get_full_name.short_description = "Employee Name"
 
-    def emp_id(self, obj):
-        """Shortcut to linked user's employee ID."""
+    def get_emp_id(self, obj):
+        """Return linked user's employee ID."""
         return getattr(obj.user, "emp_id", "-")
-    emp_id.short_description = "Employee ID"
+    get_emp_id.short_description = "Employee ID"
 
-    def email(self, obj):
-        """Shortcut to linked user's email."""
+    def get_email(self, obj):
+        """Return linked user's email address."""
         return getattr(obj.user, "email", "-")
-    email.short_description = "Email"
+    get_email.short_description = "Email"
 
-    def role(self, obj):
-        """Shortcut to linked user's role (if available)."""
+    def get_role(self, obj):
+        """Return linked user's assigned role."""
         return getattr(obj.user, "role", "-")
-    role.short_description = "Role"
+    get_role.short_description = "Role"

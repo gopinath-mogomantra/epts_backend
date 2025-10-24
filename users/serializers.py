@@ -1,5 +1,5 @@
 # ===============================================
-# users/serializers.py
+# users/serializers.py  (Final Synced Version)
 # ===============================================
 
 from rest_framework import serializers
@@ -7,64 +7,41 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.utils import timezone
-from datetime import timedelta
 import random
 import string
 
 User = get_user_model()
 
 
-
-class EmpIDTokenObtainPairSerializer(TokenObtainPairSerializer):
-    """Custom JWT login using emp_id instead of username."""
-
-    def validate(self, attrs):
-        emp_id = attrs.get("username")  # frontend still sends "username"
-        password = attrs.get("password")
-
-        user = User.objects.filter(emp_id=emp_id).first()
-        if user is None or not user.check_password(password):
-            raise serializers.ValidationError("Invalid emp_id or password")
-
-        data = super().validate(attrs)
-        data["emp_id"] = user.emp_id
-        data["role"] = user.role
-        data["first_name"] = user.first_name
-        data["last_name"] = user.last_name
-        return data
-    
-
-
 # =====================================================
-# Custom JWT Token Serializer (Login)
+# ✅ Custom JWT Token Serializer (Login)
 # =====================================================
-
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
-    Allows login using either emp_id or username.
-    Handles lockout, force password change, and JWT token generation.
+    Custom login serializer allowing login via emp_id or username.
+    Includes:
+    - Account lockout (5 failed attempts → 2 hr lock)
+    - Force password change enforcement
+    - JWT token generation
     """
-    username_field = "username"  # keep 'username' in request body
+
+    username_field = "username"  # frontend still sends "username"
 
     def validate(self, attrs):
         login_input = attrs.get("username")
         password = attrs.get("password")
 
-        # Try fetching user by emp_id or username
+        # 🔹 Try finding user by emp_id or username
         user = None
-        try:
-            if User.objects.filter(emp_id=login_input).exists():
-                user = User.objects.get(emp_id=login_input)
-            elif User.objects.filter(username=login_input).exists():
-                user = User.objects.get(username=login_input)
-        except User.DoesNotExist:
-            pass
+        if User.objects.filter(emp_id=login_input).exists():
+            user = User.objects.get(emp_id=login_input)
+        elif User.objects.filter(username=login_input).exists():
+            user = User.objects.get(username=login_input)
 
-        # User not found
         if not user:
             raise serializers.ValidationError({"detail": "Invalid credentials."})
 
-        # Check lock status
+        # 🔹 Check lockout status
         if user.account_locked:
             remaining = user.lock_remaining_time()
             if remaining:
@@ -75,10 +52,8 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             else:
                 user.unlock_account()
 
-        # Authenticate by emp_id (USERNAME_FIELD)
+        # 🔹 Authenticate using emp_id (USERNAME_FIELD)
         authenticated_user = authenticate(username=user.emp_id, password=password)
-
-
         if not authenticated_user:
             user.increment_failed_attempts()
             remaining = max(0, 5 - user.failed_login_attempts)
@@ -90,17 +65,17 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 "detail": f"Invalid credentials. {remaining} attempts left."
             })
 
-        # Reset attempts after success
+        # 🔹 Reset login attempts after success
         user.reset_login_attempts()
 
-        # Force password change check
+        # 🔹 Force password change logic
         if getattr(user, "force_password_change", False):
             raise serializers.ValidationError({
                 "force_password_change": True,
                 "detail": "You must change your password before logging in."
             })
 
-        # Generate tokens
+        # 🔹 Generate JWT tokens
         data = super().validate({"username": user.emp_id, "password": password})
         data["user"] = {
             "id": user.id,
@@ -115,15 +90,18 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         }
         return data
 
+
 # =====================================================
-# User Registration Serializer
+# ✅ User Registration Serializer
 # =====================================================
 class RegisterSerializer(serializers.ModelSerializer):
     """
-    Handles new user registration.
-    - emp_id is auto-generated and read-only.
-    - Validates password match.
+    Handles user registration.
+    - emp_id auto-generated
+    - Optional password (auto-random if not provided)
+    - Includes password confirmation
     """
+
     password = serializers.CharField(write_only=True, required=False, validators=[validate_password])
     password2 = serializers.CharField(write_only=True, required=False)
     full_name = serializers.SerializerMethodField(read_only=True)
@@ -132,7 +110,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             "id",
-            "emp_id",          # ✅ Auto-generated (read-only)
+            "emp_id",
             "username",
             "email",
             "first_name",
@@ -145,18 +123,13 @@ class RegisterSerializer(serializers.ModelSerializer):
             "password2",
             "joining_date",
         ]
-        read_only_fields = ["id", "emp_id"]  # ✅ emp_id is NOT to be provided manually
-
-    def create(self, validated_data):
-        # Auto-generate username and emp_id inside create_user
-        return User.objects.create_user(**validated_data)
+        read_only_fields = ["id", "emp_id"]
 
     def get_full_name(self, obj):
-        first = obj.first_name or ""
-        last = obj.last_name or ""
-        return f"{first} {last}".strip()
+        return f"{obj.first_name or ''} {obj.last_name or ''}".strip()
 
     def validate(self, attrs):
+        """Ensure password confirmation matches."""
         password = attrs.get("password")
         password2 = attrs.get("password2")
 
@@ -166,16 +139,16 @@ class RegisterSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
+        """Auto-generate emp_id, username, and password if needed."""
         validated_data.pop("password2", None)
         password = validated_data.pop("password", None)
         if not password:
             password = "".join(random.choices(string.ascii_letters + string.digits + "!@#$%^&*", k=10))
-        user = User.objects.create_user(password=password, **validated_data)
-        return user
+        return User.objects.create_user(password=password, **validated_data)
 
 
 # =====================================================
-# Change Password Serializer
+# ✅ Change Password Serializer
 # =====================================================
 class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(write_only=True, required=True)
@@ -190,12 +163,13 @@ class ChangePasswordSerializer(serializers.Serializer):
     def save(self, **kwargs):
         user = self.context["request"].user
         user.set_password(self.validated_data["new_password"])
+        user.force_password_change = False  # ✅ clear force flag after change
         user.save()
-        return {"message": "Password updated successfully"}
+        return {"message": "✅ Password changed successfully!"}
 
 
 # =====================================================
-# Profile Serializer (Read-Only)
+# ✅ Profile Serializer (Read-Only)
 # =====================================================
 class ProfileSerializer(serializers.ModelSerializer):
     department_name = serializers.CharField(source="department.name", read_only=True)
@@ -224,11 +198,10 @@ class ProfileSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_full_name(self, obj):
-        first = obj.first_name or ""
-        last = obj.last_name or ""
-        return f"{first} {last}".strip()
+        return f"{obj.first_name or ''} {obj.last_name or ''}".strip()
 
     def get_manager_name(self, obj):
+        """Safely get manager name if employee is linked."""
         if hasattr(obj, "employee_profile") and obj.employee_profile.manager:
             mgr = obj.employee_profile.manager.user
             return f"{mgr.first_name} {mgr.last_name}".strip()

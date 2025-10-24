@@ -1,24 +1,29 @@
-# feedback/models.py
+# ===============================================
+# feedback/models.py (Final Synced Version)
+# ===============================================
+
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 
-
 User = settings.AUTH_USER_MODEL
 
 
+# ============================================================
+# ✅ Abstract Base Class for Feedback
+# ============================================================
 class BaseFeedback(models.Model):
     """
     Abstract base model for all feedback types.
-    Common fields shared by General, Manager, and Client feedback.
+    Used by GeneralFeedback, ManagerFeedback, and ClientFeedback.
     """
 
     employee = models.ForeignKey(
         "employee.Employee",
         on_delete=models.CASCADE,
         related_name="%(class)s_feedbacks",
-        help_text="Employee receiving this feedback",
+        help_text="Employee receiving this feedback.",
     )
 
     department = models.ForeignKey(
@@ -27,20 +32,15 @@ class BaseFeedback(models.Model):
         null=True,
         blank=True,
         related_name="%(class)s_feedbacks",
-        help_text="Employee's department",
+        help_text="Department of the employee.",
     )
 
-    feedback_text = models.TextField(help_text="Detailed feedback or comments")
-
-    remarks = models.TextField(
-        blank=True,
-        null=True,
-        help_text="Additional remarks or notes by the reviewer",
-    )
+    feedback_text = models.TextField(help_text="Detailed feedback or comments from the reviewer.")
+    remarks = models.TextField(blank=True, null=True, help_text="Additional notes or suggestions.")
 
     rating = models.PositiveSmallIntegerField(
         default=0,
-        help_text="Numeric rating between 1 and 10",
+        help_text="Numeric rating (1–10 scale).",
     )
 
     created_by = models.ForeignKey(
@@ -49,20 +49,23 @@ class BaseFeedback(models.Model):
         null=True,
         blank=True,
         related_name="%(class)s_created",
-        help_text="User who submitted this feedback",
+        help_text="User who submitted this feedback.",
     )
 
     visibility = models.CharField(
         max_length=20,
         choices=[("Private", "Private"), ("Public", "Public")],
         default="Private",
-        help_text="Determines who can view this feedback in reports or dashboards",
+        help_text="Defines whether the feedback is public or private in dashboards/reports.",
     )
 
-    feedback_date = models.DateField(default=timezone.now)
+    feedback_date = models.DateField(default=timezone.localdate)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # --------------------------------------------------------
+    # Meta & Display
+    # --------------------------------------------------------
     class Meta:
         abstract = True
         ordering = ["-created_at"]
@@ -73,24 +76,51 @@ class BaseFeedback(models.Model):
             if self.employee and hasattr(self.employee, "user")
             else "Unknown Employee"
         )
-        return f"{self.__class__.__name__} for {emp_name} (Rating: {self.rating})"
+        return f"{self.__class__.__name__} → {emp_name} (Rating: {self.rating}/10)"
 
+    # --------------------------------------------------------
+    # Validation & Save Logic
+    # --------------------------------------------------------
     def clean(self):
-        """Ensure rating is between 1–10."""
-        if self.rating is None:
-            return
-        if not (1 <= self.rating <= 10):
+        """Validate rating and department consistency."""
+        if self.rating is not None and not (1 <= self.rating <= 10):
             raise ValidationError("Rating must be between 1 and 10.")
+        if self.employee and self.department:
+            if self.employee.department and self.department != self.employee.department:
+                raise ValidationError(
+                    {"department": "Department does not match the employee’s assigned department."}
+                )
+
+    def save(self, *args, **kwargs):
+        """Auto-fill department if missing and trigger notifications."""
+        if self.employee and not self.department:
+            self.department = self.employee.department
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+        # ----------------------------------------------
+        # Optional Notification (if notifications app installed)
+        # ----------------------------------------------
+        try:
+            from notifications.models import Notification
+            Notification.objects.create(
+                employee=self.employee.user,
+                message=f"New {self.__class__.__name__.replace('Feedback', '').strip()} feedback received "
+                        f"on {self.feedback_date.strftime('%d %b %Y')} (Rating: {self.rating}/10).",
+                auto_delete=True,
+            )
+        except Exception:
+            # Fail silently if notifications app not ready
+            pass
 
 
-# ---------------------------------------------------------
-# Concrete Feedback Models
-# ---------------------------------------------------------
-
+# ============================================================
+# ✅ Concrete Feedback Models
+# ============================================================
 class GeneralFeedback(BaseFeedback):
     """
-    General feedback given by Admin or HR department.
-    Typically covers attitude, behavior, and overall performance.
+    General feedback typically given by Admins or HR staff.
+    Covers attitude, teamwork, and overall workplace behavior.
     """
 
     class Meta:
@@ -100,14 +130,13 @@ class GeneralFeedback(BaseFeedback):
 
 class ManagerFeedback(BaseFeedback):
     """
-    Feedback provided by a Manager about an employee’s work performance.
-    Includes optional manager_name for reference.
+    Feedback given by a manager about an employee’s performance.
     """
     manager_name = models.CharField(
         max_length=150,
         blank=True,
         null=True,
-        help_text="Name of the manager providing the feedback",
+        help_text="Manager's name (auto-filled or entered manually).",
     )
 
     class Meta:
@@ -117,14 +146,13 @@ class ManagerFeedback(BaseFeedback):
 
 class ClientFeedback(BaseFeedback):
     """
-    Feedback provided by a client regarding project delivery or quality.
-    Includes optional client_name for audit tracking.
+    Feedback provided by clients regarding project quality, delivery, or support.
     """
     client_name = models.CharField(
         max_length=150,
         blank=True,
         null=True,
-        help_text="Name of the client providing the feedback",
+        help_text="Client's name or organization giving the feedback.",
     )
 
     class Meta:

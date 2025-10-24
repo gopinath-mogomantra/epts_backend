@@ -1,5 +1,12 @@
 # ===============================================
-# users/admin.py
+# users/admin.py (Final Verified Version)
+# ===============================================
+# Django Admin configuration for the custom User model.
+# Features:
+# - Color-coded roles (Admin/Manager/Employee)
+# - Account lock/unlock controls with expiry timer
+# - Department integration
+# - Inline search, filtering, and query optimization
 # ===============================================
 
 from django.contrib import admin, messages
@@ -13,14 +20,10 @@ from .models import User
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
-    """
-    Custom admin interface for the User model (username-based login).
-    Integrated with department info, color-coded roles,
-    and account lockout management (with 2-hour expiry timer).
-    """
+    """Custom admin interface for the User model."""
 
     # ------------------------------------------------------
-    # Fields visible in list view
+    # Columns in list display
     # ------------------------------------------------------
     list_display = (
         "emp_id",
@@ -52,7 +55,7 @@ class UserAdmin(BaseUserAdmin):
     )
 
     # ------------------------------------------------------
-    # Searchable fields
+    # Search fields
     # ------------------------------------------------------
     search_fields = (
         "emp_id",
@@ -65,7 +68,7 @@ class UserAdmin(BaseUserAdmin):
     )
 
     # ------------------------------------------------------
-    # Ordering, pagination, and readonly fields
+    # General display and behavior
     # ------------------------------------------------------
     ordering = ("emp_id",)
     list_per_page = 25
@@ -80,7 +83,7 @@ class UserAdmin(BaseUserAdmin):
     )
 
     # ------------------------------------------------------
-    # Fieldsets for detail/edit page
+    # Fieldsets (Detail Page)
     # ------------------------------------------------------
     fieldsets = (
         (_("Login Info"), {"fields": ("username", "email", "password")}),
@@ -119,7 +122,7 @@ class UserAdmin(BaseUserAdmin):
                     "account_locked",
                     "locked_at",
                 ),
-                "description": "Track login attempts, lock status, and lock time.",
+                "description": "Tracks login attempts, lock status, and lock timestamps.",
             },
         ),
         (
@@ -129,7 +132,7 @@ class UserAdmin(BaseUserAdmin):
     )
 
     # ------------------------------------------------------
-    # Fields shown when adding a new user from Admin
+    # Add User Page Configuration
     # ------------------------------------------------------
     add_fieldsets = (
         (
@@ -153,41 +156,40 @@ class UserAdmin(BaseUserAdmin):
     )
 
     # ------------------------------------------------------
-    # Custom display methods
+    # Custom Display Helpers
     # ------------------------------------------------------
     def get_full_name(self, obj):
-        """Display the full name of the user (fallback to username)."""
+        """Return user's full name or fallback to username."""
         return f"{obj.first_name} {obj.last_name}".strip() or obj.username
     get_full_name.short_description = "Full Name"
 
     def colored_role(self, obj):
-        """Show role with color-coded style."""
+        """Color-coded display for roles."""
         color_map = {"Admin": "green", "Manager": "orange", "Employee": "blue"}
         color = color_map.get(obj.role, "black")
         return format_html(f"<b><span style='color:{color}'>{obj.role}</span></b>")
     colored_role.short_description = "Role"
 
     def get_department(self, obj):
-        """Display department name safely."""
+        """Display department name if available."""
         return obj.department.name if obj.department else "-"
     get_department.short_description = "Department"
 
     def lock_expiry_time(self, obj):
-        """Show remaining time until auto-unlock, if locked."""
+        """Show remaining lock time (auto-unlocks after 2h)."""
         if obj.account_locked and obj.locked_at:
-            expiry_time = obj.locked_at + timedelta(hours=2)
-            remaining = expiry_time - timezone.now()
+            expiry = obj.locked_at + timedelta(hours=2)
+            remaining = expiry - timezone.now()
             if remaining.total_seconds() > 0:
                 hrs = int(remaining.total_seconds() // 3600)
                 mins = int((remaining.total_seconds() % 3600) // 60)
                 return format_html(f"<span style='color:red;'>Unlocks in {hrs}h {mins}m</span>")
-            else:
-                return format_html("<span style='color:green;'>Ready to unlock</span>")
+            return format_html("<span style='color:green;'>Ready to unlock</span>")
         return "-"
     lock_expiry_time.short_description = "Lock Expiry"
 
     # ------------------------------------------------------
-    # Query optimization
+    # Query Optimization
     # ------------------------------------------------------
     def get_queryset(self, request):
         qs = super().get_queryset(request)
@@ -199,17 +201,17 @@ class UserAdmin(BaseUserAdmin):
     actions = ["unlock_selected_accounts"]
 
     def unlock_selected_accounts(self, request, queryset):
-        """Unlock selected user accounts (Admin-only)."""
-        unlocked_count = 0
+        """Unlock selected locked user accounts."""
+        unlocked = 0
         for user in queryset:
             if user.account_locked:
                 user.unlock_account()
-                unlocked_count += 1
+                unlocked += 1
 
-        if unlocked_count:
+        if unlocked:
             self.message_user(
                 request,
-                f"✅ {unlocked_count} account(s) successfully unlocked.",
+                f"✅ {unlocked} account(s) successfully unlocked.",
                 level=messages.SUCCESS,
             )
         else:

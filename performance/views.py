@@ -1,5 +1,5 @@
 # ===============================================
-# performance/views.py (Final Updated Version)
+# performance/views.py (Final Synced Version)
 # ===============================================
 
 from rest_framework import viewsets, permissions, status, filters
@@ -31,11 +31,11 @@ class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
     Handles CRUD operations for performance evaluations.
     - Admins: Full access
     - Managers: Access to their team's evaluations
-    - Employees: View only their own evaluations
+    - Employees: Can view only their own evaluations
     """
     queryset = PerformanceEvaluation.objects.select_related(
         "employee__user", "evaluator", "department"
-    ).all()
+    )
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [filters.OrderingFilter]
     ordering_fields = ["review_date", "total_score"]
@@ -64,11 +64,12 @@ class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        serializer = self.get_serializer(data=request.data)
+        serializer = self.get_serializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
 
-        # Infer department if not provided
         employee = serializer.validated_data.get("employee")
+
+        # Auto-infer department if missing
         if employee and not serializer.validated_data.get("department"):
             serializer.validated_data["department"] = employee.department
 
@@ -80,19 +81,19 @@ class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         except Exception as exc:
-            logger.exception("Failed to save PerformanceEvaluation: %s", exc)
+            logger.exception("PerformanceEvaluation save failed: %s", exc)
             return Response(
                 {"error": "Failed to save evaluation."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        # ✅ Trigger notification
+        # ✅ Notification Trigger
         try:
             employee_user = instance.employee.user
             exists = Notification.objects.filter(
                 employee=employee_user,
                 message__icontains=str(instance.evaluation_period),
-                is_read=False
+                is_read=False,
             ).exists()
 
             if not exists:
@@ -102,19 +103,19 @@ class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
                     auto_delete=True,
                 )
         except Exception as e:
-            logger.exception("Notification creation failed for evaluation id %s: %s", instance.pk, e)
+            logger.warning("Notification creation failed for evaluation %s: %s", instance.pk, e)
 
         return Response(
             {
                 "message": "✅ Performance evaluation recorded successfully.",
-                "data": PerformanceEvaluationSerializer(instance).data,
+                "data": PerformanceEvaluationSerializer(instance, context={"request": request}).data,
             },
             status=status.HTTP_201_CREATED,
         )
 
 
 # ==========================================================
-# ✅ PERFORMANCE SUMMARY (TOP 3 / WEAK 3 + DEPT SUMMARY)
+# ✅ PERFORMANCE SUMMARY (Top 3 / Weak 3 / Dept Summary)
 # ==========================================================
 class PerformanceSummaryView(APIView):
     """
@@ -135,7 +136,6 @@ class PerformanceSummaryView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # Latest week & year
         latest_year = PerformanceEvaluation.objects.aggregate(max_year=Max("year"))["max_year"]
         latest_week = (
             PerformanceEvaluation.objects.filter(year=latest_year)
@@ -143,29 +143,26 @@ class PerformanceSummaryView(APIView):
         )
 
         if not latest_week:
-            return Response({"message": "No performance records available."}, status=200)
+            return Response({"message": "No performance records available."}, status=status.HTTP_200_OK)
 
-        # Get latest evaluations
+        # Fetch current week data
         latest_evals = PerformanceEvaluation.objects.filter(
             year=latest_year, week_number=latest_week
         ).select_related("employee__user", "department")
 
         ranked_evals = latest_evals.annotate(
-            computed_rank=Window(
-                expression=Rank(),
-                order_by=F("total_score").desc(),
-            )
+            computed_rank=Window(expression=Rank(), order_by=F("total_score").desc())
         ).order_by("computed_rank")
 
         # Top 3 and Weak 3
         top_3 = list(ranked_evals[:3])
-        weak_3 = [e for e in ranked_evals.order_by("total_score") if e not in top_3][:3]
+        weak_3 = list(latest_evals.order_by("total_score")[:3])
 
         def serialize(emp):
-            user = emp.employee.user
+            u = emp.employee.user
             return {
-                "emp_id": user.emp_id,
-                "employee_name": f"{user.first_name} {user.last_name}".strip(),
+                "emp_id": u.emp_id,
+                "employee_name": f"{u.first_name} {u.last_name}".strip(),
                 "department": emp.department.name if emp.department else "N/A",
                 "total_score": emp.total_score,
                 "average_score": emp.average_score,
@@ -174,30 +171,27 @@ class PerformanceSummaryView(APIView):
                 "rank": getattr(emp, "computed_rank", None),
             }
 
-        dept_avg = round(latest_evals.aggregate(Avg("average_score"))["average_score__avg"], 2)
-
-        dept_summary = (
+        dept_avg = round(latest_evals.aggregate(Avg("average_score"))["average_score__avg"] or 0, 2)
+        dept_summary_qs = (
             latest_evals.values("department__name")
             .annotate(avg_score=Avg("average_score"))
             .order_by("department__name")
         )
 
         department_summary = []
-        for d in dept_summary:
+        for d in dept_summary_qs:
             dept_name = d["department__name"] or "N/A"
             top_in_dept = (
-                latest_evals.filter(department__name=dept_name)
-                .order_by("-total_score")
-                .first()
+                latest_evals.filter(department__name=dept_name).order_by("-total_score").first()
             )
             department_summary.append({
                 "department": dept_name,
-                "avg_score": round(d["avg_score"], 2) if d["avg_score"] else 0,
+                "avg_score": round(d["avg_score"] or 0, 2),
                 "top_performer": (
                     f"{top_in_dept.employee.user.first_name} {top_in_dept.employee.user.last_name}".strip()
                     if top_in_dept and hasattr(top_in_dept, "employee")
                     else "-"
-                )
+                ),
             })
 
         return Response(
@@ -213,38 +207,40 @@ class PerformanceSummaryView(APIView):
 
 
 # ==========================================================
-# ✅ EMPLOYEE DASHBOARD (SELF PERFORMANCE VIEW)
+# ✅ EMPLOYEE DASHBOARD (Self Performance View)
 # ==========================================================
 class EmployeeDashboardView(APIView):
     """
-    Shows an employee's personal performance dashboard.
-    Includes average, best week, and trend chart data.
+    Displays the logged-in employee's performance summary:
+    - Overall average
+    - Best week
+    - Trend data (weekly scores)
     """
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
         user = request.user
         try:
-            employee = Employee.objects.get(user=user)
+            employee = Employee.objects.select_related("user").get(user=user)
         except Employee.DoesNotExist:
             return Response(
                 {"error": "Employee profile not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        evaluations = (
-            PerformanceEvaluation.objects.filter(employee=employee)
-            .order_by("-review_date")
-        )
+        evaluations = PerformanceEvaluation.objects.filter(employee=employee).order_by("-review_date")
 
         if not evaluations.exists():
-            return Response({"message": "No performance records found."}, status=200)
+            return Response({"message": "No performance records found."}, status=status.HTTP_200_OK)
 
-        avg_score = round(evaluations.aggregate(Avg("average_score"))["average_score__avg"], 2)
+        avg_score = round(evaluations.aggregate(Avg("average_score"))["average_score__avg"] or 0, 2)
         best = evaluations.order_by("-total_score").first()
 
-        trend_data = evaluations.values("week_number", "average_score").order_by("week_number")
-        serializer = PerformanceDashboardSerializer(evaluations, many=True)
+        trend_data = list(
+            evaluations.values("week_number", "average_score").order_by("week_number")
+        )
+
+        serializer = PerformanceDashboardSerializer(evaluations, many=True, context={"request": request})
 
         return Response(
             {
@@ -255,7 +251,7 @@ class EmployeeDashboardView(APIView):
                     "evaluation_period": best.evaluation_period,
                     "average_score": best.average_score,
                 },
-                "trend_data": list(trend_data),
+                "trend_data": trend_data,
                 "evaluations": serializer.data,
             },
             status=status.HTTP_200_OK,
@@ -263,13 +259,13 @@ class EmployeeDashboardView(APIView):
 
 
 # ==========================================================
-# ✅ EMPLOYEE PERFORMANCE DETAIL (FOR ADMIN/MANAGER SEARCH)
+# ✅ EMPLOYEE PERFORMANCE DETAIL (Admin/Manager Access)
 # ==========================================================
 class EmployeePerformanceView(APIView):
     """
-    Fetch all or specific week's performance evaluations for a given employee.
-    - Accessible by Admins & Managers.
-    - Accepts query params: ?evaluation_period=Week 43, 2025
+    Fetches all or specific week's evaluations for a given employee.
+    Accessible by Admins and Managers.
+    Query params: ?evaluation_period=Week 43, 2025
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -284,7 +280,9 @@ class EmployeePerformanceView(APIView):
             )
 
         try:
-            employee = Employee.objects.select_related("user", "department", "manager__user").get(user__emp_id=emp_id)
+            employee = Employee.objects.select_related("user", "department", "manager__user").get(
+                user__emp_id=emp_id
+            )
         except Employee.DoesNotExist:
             return Response(
                 {"error": f"No employee found with ID {emp_id}."},
@@ -298,15 +296,15 @@ class EmployeePerformanceView(APIView):
 
         if not qs.exists():
             return Response(
-                {"message": f"No evaluations found for {employee.user.get_full_name()}."},
+                {"message": f"No evaluations found for {employee.user.first_name}."},
                 status=status.HTTP_200_OK,
             )
 
-        serializer = PerformanceEvaluationSerializer(qs, many=True)
+        serializer = PerformanceEvaluationSerializer(qs, many=True, context={"request": request})
 
         header_info = {
             "emp_id": employee.user.emp_id,
-            "employee_name": employee.user.get_full_name(),
+            "employee_name": f"{employee.user.first_name} {employee.user.last_name}".strip(),
             "department": employee.department.name if employee.department else None,
             "manager_name": (
                 f"{employee.manager.user.first_name} {employee.manager.user.last_name}".strip()
@@ -316,9 +314,6 @@ class EmployeePerformanceView(APIView):
         }
 
         return Response(
-            {
-                "header": header_info,
-                "evaluations": serializer.data,
-            },
+            {"header": header_info, "evaluations": serializer.data},
             status=status.HTTP_200_OK,
         )
