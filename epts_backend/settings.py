@@ -87,7 +87,7 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "epts_backend.wsgi.application"
 
-'''
+
 # -------------------------------------------------------------------
 # DATABASE CONFIGURATION (MySQL)
 # -------------------------------------------------------------------
@@ -95,7 +95,7 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.mysql",
         "NAME": os.getenv("MYSQL_DATABASE", "epts_project_db"),
-        "USER": os.getenv("MYSQL_USER", "remote_user"),
+        "USER": os.getenv("MYSQL_USER", "gopi"),
         "PASSWORD": os.getenv("MYSQL_PASSWORD", "Mogo@12345"),
         "HOST": os.getenv("MYSQL_HOST", "100.93.35.95"),
         "PORT": os.getenv("MYSQL_PORT", "3306"),
@@ -104,17 +104,17 @@ DATABASES = {
             "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
         },
     }
-}'''
+}
 
 # settings.py
-
+'''
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / "db.sqlite3",
     }
 }
-
+'''
 # -------------------------------------------------------------------
 # CUSTOM USER MODEL
 # -------------------------------------------------------------------

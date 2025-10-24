@@ -1,5 +1,5 @@
 # ===============================================
-# reports/serializers.py (Final Production Version)
+# reports/serializers.py (Final Production-Stable Version)
 # ===============================================
 # Combines data from Performance + Feedback modules
 # to generate weekly, monthly, manager-wise,
@@ -46,7 +46,7 @@ class WeeklyReportSerializer(serializers.Serializer):
     feedback_avg = serializers.FloatField()
     week_number = serializers.IntegerField()
     year = serializers.IntegerField()
-    rank = serializers.IntegerField()
+    rank = serializers.IntegerField(allow_null=True)
     remarks = serializers.CharField(allow_blank=True, allow_null=True, required=False)
 
 
@@ -61,7 +61,7 @@ class MonthlyReportSerializer(serializers.Serializer):
     month = serializers.IntegerField()
     year = serializers.IntegerField()
     avg_score = serializers.FloatField()
-    feedback_avg = serializers.FloatField()
+    feedback_avg = serializers.FloatField(required=False)
     best_week = serializers.IntegerField()
     best_week_score = serializers.FloatField()
 
@@ -93,7 +93,7 @@ class ManagerReportSerializer(serializers.Serializer):
     feedback_avg = serializers.FloatField()
     week_number = serializers.IntegerField()
     year = serializers.IntegerField()
-    rank = serializers.IntegerField()
+    rank = serializers.IntegerField(allow_null=True)
     remarks = serializers.CharField(allow_blank=True, allow_null=True)
 
 
@@ -111,7 +111,7 @@ class DepartmentReportSerializer(serializers.Serializer):
     feedback_avg = serializers.FloatField()
     week_number = serializers.IntegerField()
     year = serializers.IntegerField()
-    rank = serializers.IntegerField()
+    rank = serializers.IntegerField(allow_null=True)
     remarks = serializers.CharField(allow_blank=True, allow_null=True)
 
 
@@ -184,12 +184,12 @@ class CombinedReportSerializer(serializers.Serializer):
     feedback_summary = serializers.DictField(child=serializers.FloatField())
 
     def validate(self, data):
-        """Ensure correct numeric bounds for period."""
+        """Ensure correct numeric bounds for week/month."""
         report_type = data.get("type")
         period = data.get("week_or_month")
 
         if report_type in ["weekly", "manager", "department"] and not (1 <= period <= 53):
-            raise serializers.ValidationError("Invalid week number (1–53).")
+            raise serializers.ValidationError("Invalid week number (must be between 1–53).")
         if report_type == "monthly" and not (1 <= period <= 12):
-            raise serializers.ValidationError("Invalid month (1–12).")
+            raise serializers.ValidationError("Invalid month (must be between 1–12).")
         return data
