@@ -1,5 +1,5 @@
 # ===========================================================
-# users/urls.py (Final Verified Version)
+# users/urls.py (Frontend-Aligned & Demo Ready — 2025-10-24)
 # ===========================================================
 # Routes for:
 # - Authentication (Login, Refresh)
@@ -26,8 +26,8 @@ urlpatterns = [
     # -------------------------------------------------------
     # 🔐 Authentication Endpoints
     # -------------------------------------------------------
-    path("login/", ObtainTokenPairView.as_view(), name="token_obtain_pair"),
-    path("token/refresh/", RefreshTokenView.as_view(), name="token_refresh"),
+    path("login/", ObtainTokenPairView.as_view(), name="login"),
+    path("token/refresh/", RefreshTokenView.as_view(), name="token-refresh"),
 
     # -------------------------------------------------------
     # 👤 User Management
@@ -43,7 +43,7 @@ urlpatterns = [
     path("reset-password/", reset_password, name="reset-password"),
 
     # -------------------------------------------------------
-    # ⚙️ Role Listing (Admin)
+    # ⚙️ Roles
     # -------------------------------------------------------
     path("roles/", RoleListView.as_view(), name="roles"),
 ]

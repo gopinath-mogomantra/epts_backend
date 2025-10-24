@@ -1,5 +1,5 @@
 # ===============================================
-# performance/views.py (Final Synced Version)
+# performance/views.py (Final Updated — 2025-10-24)
 # ===============================================
 
 from rest_framework import viewsets, permissions, status, filters
@@ -56,6 +56,9 @@ class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
             return qs.filter(employee__user=user)
         return qs
 
+    # ------------------------------------------------------
+    # ✅ CREATE (Now Supports emp_id, evaluator_id, dept_code)
+    # ------------------------------------------------------
     def create(self, request, *args, **kwargs):
         role = getattr(request.user, "role", "").lower()
         if role not in ["admin", "manager"]:
@@ -67,14 +70,8 @@ class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
 
-        employee = serializer.validated_data.get("employee")
-
-        # Auto-infer department if missing
-        if employee and not serializer.validated_data.get("department"):
-            serializer.validated_data["department"] = employee.department
-
         try:
-            instance = serializer.save(evaluator=request.user)
+            instance = serializer.save()
         except IntegrityError:
             return Response(
                 {"error": "Performance for this week already exists."},
@@ -105,10 +102,39 @@ class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.warning("Notification creation failed for evaluation %s: %s", instance.pk, e)
 
+        # ✅ Frontend-Aligned Response
+        emp = instance.employee.user
+        evaluator = instance.evaluator
+        dept = instance.department
+
         return Response(
             {
                 "message": "✅ Performance evaluation recorded successfully.",
-                "data": PerformanceEvaluationSerializer(instance, context={"request": request}).data,
+                "evaluation": {
+                    "employee": {
+                        "emp_id": emp.emp_id,
+                        "name": f"{emp.first_name} {emp.last_name}".strip(),
+                    },
+                    "evaluator": (
+                        {
+                            "emp_id": evaluator.emp_id,
+                            "name": f"{evaluator.first_name} {evaluator.last_name}".strip(),
+                        }
+                        if evaluator else None
+                    ),
+                    "department": (
+                        {
+                            "code": dept.code,
+                            "name": dept.name,
+                        }
+                        if dept else None
+                    ),
+                    "evaluation_type": instance.evaluation_type,
+                    "total_score": instance.total_score,
+                    "average_score": instance.average_score,
+                    "remarks": instance.remarks,
+                    "evaluation_period": instance.evaluation_period,
+                },
             },
             status=status.HTTP_201_CREATED,
         )

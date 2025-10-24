@@ -1,5 +1,5 @@
 # ===============================================
-# users/serializers.py  (Final Synced Version)
+# users/serializers.py  (Frontend-Aligned & Demo-Ready — 2025-10-24)
 # ===============================================
 
 from rest_framework import serializers
@@ -85,6 +85,8 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             "first_name": user.first_name,
             "last_name": user.last_name,
             "role": user.role,
+            "department": user.department.name if user.department else None,
+            "status": user.status,
             "is_verified": user.is_verified,
             "is_active": user.is_active,
         }
@@ -105,6 +107,7 @@ class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=False, validators=[validate_password])
     password2 = serializers.CharField(write_only=True, required=False)
     full_name = serializers.SerializerMethodField(read_only=True)
+    department_name = serializers.CharField(source="department.name", read_only=True)
 
     class Meta:
         model = User
@@ -117,8 +120,10 @@ class RegisterSerializer(serializers.ModelSerializer):
             "last_name",
             "full_name",
             "department",
+            "department_name",
             "phone",
             "role",
+            "status",          # 🆕 Added for frontend filter alignment
             "password",
             "password2",
             "joining_date",
@@ -191,6 +196,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             "department_name",
             "manager_name",
             "phone",
+            "status",           # 🆕 Added for React table filter
             "joining_date",
             "is_verified",
             "is_active",

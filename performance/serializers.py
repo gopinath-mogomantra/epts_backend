@@ -1,7 +1,3 @@
-# ===============================================
-# performance/serializers.py 
-# ===============================================
-
 from rest_framework import serializers
 from django.utils import timezone
 from django.contrib.auth import get_user_model
@@ -39,7 +35,7 @@ class SimpleUserSerializer(serializers.ModelSerializer):
 class SimpleDepartmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Department
-        fields = ["id", "name"]
+        fields = ["id", "name", "code"]
 
 
 class SimpleEmployeeSerializer(serializers.ModelSerializer):
@@ -149,24 +145,20 @@ class PerformanceEvaluationSerializer(serializers.ModelSerializer):
 
 
 # ======================================================
-# CREATE / UPDATE Serializer (Validated)
+# CREATE / UPDATE Serializer (with emp_id + dept_code)
 # ======================================================
 class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
-    employee = serializers.PrimaryKeyRelatedField(queryset=Employee.objects.all())
-    evaluator = serializers.PrimaryKeyRelatedField(
-        queryset=User.objects.all(), required=False, allow_null=True
-    )
-    department = serializers.PrimaryKeyRelatedField(
-        queryset=Department.objects.all(), required=False, allow_null=True
-    )
+    employee_emp_id = serializers.CharField(write_only=True)
+    evaluator_emp_id = serializers.CharField(write_only=True, required=False, allow_null=True)
+    department_code = serializers.CharField(write_only=True, required=False, allow_null=True)
 
     class Meta:
         model = PerformanceEvaluation
         fields = [
             "id",
-            "employee",
-            "evaluator",
-            "department",
+            "employee_emp_id",
+            "evaluator_emp_id",
+            "department_code",
             "evaluation_type",
             "review_date",
             "evaluation_period",
@@ -188,58 +180,100 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
             "remarks",
         ]
 
-    def validate_review_date(self, value):
-        if value > timezone.now().date():
-            raise serializers.ValidationError("Review date cannot be in the future.")
+    # --------------------------------------------------
+    # Validate Employee
+    # --------------------------------------------------
+    def validate_employee_emp_id(self, value):
+        from employee.models import Employee
+        try:
+            emp = Employee.objects.select_related("user", "department").get(user__emp_id__iexact=value)
+        except Employee.DoesNotExist:
+            raise serializers.ValidationError(f"Employee with emp_id '{value}' not found.")
+        self.context["employee"] = emp
         return value
 
+    # --------------------------------------------------
+    # Validate Evaluator
+    # --------------------------------------------------
+    def validate_evaluator_emp_id(self, value):
+        if not value:
+            return None
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        try:
+            evaluator = User.objects.get(emp_id__iexact=value)
+        except User.DoesNotExist:
+            raise serializers.ValidationError(f"Evaluator with emp_id '{value}' not found.")
+        self.context["evaluator"] = evaluator
+        return value
+
+    # --------------------------------------------------
+    # Validate Department
+    # --------------------------------------------------
+    def validate_department_code(self, value):
+        if not value:
+            return None
+        from employee.models import Department
+        try:
+            dept = Department.objects.get(code__iexact=value, is_active=True)
+        except Department.DoesNotExist:
+            raise serializers.ValidationError(f"Department with code '{value}' not found or inactive.")
+        self.context["department"] = dept
+        return value
+
+    # --------------------------------------------------
+    # Global Validation
+    # --------------------------------------------------
     def validate(self, attrs):
-        employee = attrs.get("employee")
+        employee = self.context.get("employee")
         review_date = attrs.get("review_date", timezone.now().date())
         evaluation_type = attrs.get("evaluation_type", "Manager")
 
-        # Evaluator must be Admin or Manager
-        request = self.context.get("request")
-        if request and hasattr(request.user, "role"):
-            role = request.user.role.lower()
-            if role not in ["admin", "manager"]:
-                raise serializers.ValidationError(
-                    {"evaluator": "Only Admin or Manager can create evaluations."}
-                )
-
-        # Validate metric range
-        metric_fields = [
-            "communication_skills", "multitasking", "team_skills",
-            "technical_skills", "job_knowledge", "productivity",
-            "creativity", "work_quality", "professionalism",
-            "work_consistency", "attitude", "cooperation",
-            "dependability", "attendance", "punctuality",
-        ]
-        for field in metric_fields:
-            value = attrs.get(field, 0)
-            if not (0 <= int(value) <= 100):
-                raise serializers.ValidationError({field: "Each metric must be between 0 and 100."})
-
-        # Prevent duplicate evaluations for the same week
+        # Prevent duplicate evaluations for same week + evaluator
         week_number = review_date.isocalendar()[1]
         year = review_date.year
         existing = PerformanceEvaluation.objects.filter(
             employee=employee, week_number=week_number, year=year, evaluation_type=evaluation_type
         )
-        instance = getattr(self, "instance", None)
-        if instance:
-            existing = existing.exclude(pk=instance.pk)
+        if self.instance:
+            existing = existing.exclude(pk=self.instance.pk)
         if existing.exists():
             raise serializers.ValidationError(
                 f"Performance evaluation already exists for {employee.user.emp_id} in Week {week_number}, {year} ({evaluation_type})."
             )
 
+        # Only Admin or Manager can create evaluations
+        request = self.context.get("request")
+        if request and hasattr(request.user, "role"):
+            role = request.user.role.lower()
+            if role not in ["admin", "manager"]:
+                raise serializers.ValidationError({"evaluator": "Only Admin or Manager can create evaluations."})
         return attrs
 
+    # --------------------------------------------------
+    # CREATE
+    # --------------------------------------------------
     def create(self, validated_data):
-        instance = PerformanceEvaluation.objects.create(**validated_data)
-        return instance
+        emp = self.context.get("employee")
+        evaluator = self.context.get("evaluator", None)
+        department = self.context.get("department", emp.department if emp else None)
 
+        # Remove extra fields before saving
+        validated_data.pop("employee_emp_id", None)
+        validated_data.pop("evaluator_emp_id", None)
+        validated_data.pop("department_code", None)
+
+        evaluation = PerformanceEvaluation.objects.create(
+            employee=emp,
+            evaluator=evaluator,
+            department=department,
+            **validated_data,
+        )
+        return evaluation
+
+    # --------------------------------------------------
+    # UPDATE
+    # --------------------------------------------------
     def update(self, instance, validated_data):
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
@@ -253,7 +287,7 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
 class PerformanceDashboardSerializer(serializers.ModelSerializer):
     emp_id = serializers.SerializerMethodField()
     employee_name = serializers.SerializerMethodField()
-    employee_full_name = serializers.SerializerMethodField() 
+    employee_full_name = serializers.SerializerMethodField()
     manager_name = serializers.SerializerMethodField()
     manager_full_name = serializers.SerializerMethodField()
     department_name = serializers.CharField(source="department.name", read_only=True)

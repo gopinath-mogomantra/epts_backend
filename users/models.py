@@ -1,5 +1,5 @@
 # ===========================================================
-# users/models.py  (Final Synced Version — 2025-10-24)
+# users/models.py  (Frontend-Aligned & Demo-Ready — 2025-10-24)
 # ===========================================================
 
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
@@ -43,13 +43,16 @@ class UserManager(BaseUserManager):
         extra_fields["emp_id"] = emp_id
         user = self.model(username=username, **extra_fields)
         user.set_password(password)
-        if extra_fields.get("is_reset", False):  # only force if admin-triggered reset
+
+        # 🆕 Only force password change if created/reset by admin
+        if extra_fields.get("is_reset", False):
             user.force_password_change = True
         else:
             user.force_password_change = False
+
         user.save(using=self._db)
-        
-        # 🔹 Log generated credentials (for local admin tracking only)
+
+        # 🧾 Optional: Log generated credentials locally
         log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs")
         os.makedirs(log_dir, exist_ok=True)
         log_file = os.path.join(log_dir, "user_credentials.log")
@@ -84,6 +87,11 @@ class User(AbstractBaseUser, PermissionsMixin):
         ("Employee", "Employee"),
     ]
 
+    STATUS_CHOICES = [  # 🆕 Added for frontend filter/dropdown
+        ("Active", "Active"),
+        ("Inactive", "Inactive"),
+    ]
+
     # Core Info
     emp_id = models.CharField(max_length=50, unique=True, editable=False)
     username = models.CharField(max_length=150, unique=True)
@@ -113,6 +121,9 @@ class User(AbstractBaseUser, PermissionsMixin):
     # Other details
     joining_date = models.DateField(default=timezone.now)
     is_verified = models.BooleanField(default=False)
+
+    # 🆕 Status field for frontend list filters
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="Active")
 
     # Security & Locking
     failed_login_attempts = models.PositiveIntegerField(default=0)

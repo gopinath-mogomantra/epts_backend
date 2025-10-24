@@ -1,5 +1,5 @@
 # ===============================================
-# employee/models.py (Final Synced Version)
+# employee/models.py (Frontend-Aligned & Demo Ready — 2025-10-24)
 # ===============================================
 
 from django.db import models
@@ -17,6 +17,13 @@ User = settings.AUTH_USER_MODEL
 class Department(models.Model):
     """Stores all departments in the organization (HR, IT, etc.)."""
 
+    code = models.CharField(
+        max_length=10,
+        unique=True,
+        blank=True,
+        null=True,
+        help_text="Optional short code for department (e.g., HR01, IT02).",
+    )
     name = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True, null=True)
     is_active = models.BooleanField(default=True)
@@ -32,6 +39,11 @@ class Department(models.Model):
     def __str__(self):
         return self.name
 
+    @property
+    def display_name(self):
+        """Used in dropdowns and reports."""
+        return f"{self.name} ({self.code})" if self.code else self.name
+
 
 # =====================================================
 # ✅ EMPLOYEE MODEL
@@ -43,6 +55,12 @@ class Employee(models.Model):
         ("Admin", "Admin"),
         ("Manager", "Manager"),
         ("Employee", "Employee"),
+    ]
+
+    STATUS_CHOICES = [
+        ("Active", "Active"),
+        ("On Leave", "On Leave"),
+        ("Resigned", "Resigned"),
     ]
 
     # -------------------------------------------------
@@ -103,14 +121,12 @@ class Employee(models.Model):
 
     status = models.CharField(
         max_length=20,
-        choices=[
-            ("Active", "Active"),
-            ("On Leave", "On Leave"),
-            ("Resigned", "Resigned"),
-        ],
+        choices=STATUS_CHOICES,
         default="Active",
         help_text="Employment status.",
     )
+
+    is_active = models.BooleanField(default=True, help_text="Marks whether employee is currently active in system.")
 
     joining_date = models.DateField(default=timezone.now)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -169,9 +185,19 @@ class Employee(models.Model):
         return getattr(self.user, "role", None)
 
     @property
+    def department_name(self):
+        """Shortcut to access department name."""
+        return getattr(self.department, "name", "-")
+
+    @property
     def manager_name(self):
         """Return manager's full name if available."""
         if self.manager and hasattr(self.manager, "user"):
             mgr_user = self.manager.user
             return f"{mgr_user.first_name} {mgr_user.last_name}".strip() or mgr_user.username
         return "-"
+
+    @property
+    def reporting_to_name(self):
+        """Alias for manager_name used by frontend."""
+        return self.manager_name

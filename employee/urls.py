@@ -1,6 +1,6 @@
-# ===============================================
-# employee/urls.py (Final Verified Version)
-# ===============================================
+# ===========================================================
+# employee/urls.py (Frontend-Aligned & Demo-Ready — 2025-10-24)
+# ===========================================================
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import DepartmentViewSet, EmployeeViewSet
@@ -9,18 +9,27 @@ app_name = "employee"
 
 """
 Auto-registers all CRUD API endpoints for:
-- /api/employees/
-- /api/departments/
-with full REST functionality (list, retrieve, create, update, delete)
+-------------------------------------------------------------
+🔹 /api/departments/ → Department CRUD (Admin restricted)
+🔹 /api/employees/   → Employee CRUD (Admin/Manager restricted)
+-------------------------------------------------------------
+Each route automatically supports:
+  - GET (list, retrieve)
+  - POST (create)
+  - PUT/PATCH (update)
+  - DELETE (soft delete for departments)
 """
 
 # -----------------------------------------------------------
-# DRF DefaultRouter for automatic CRUD routes
+# DRF Router Setup (Auto CRUD)
 # -----------------------------------------------------------
 router = DefaultRouter()
-router.register(r"departments", DepartmentViewSet, basename="department")
-router.register(r"employees", EmployeeViewSet, basename="employee")
+router.register(r"departments", DepartmentViewSet, basename="departments")
+router.register(r"employees", EmployeeViewSet, basename="employees")
 
+# -----------------------------------------------------------
+# URL Patterns
+# -----------------------------------------------------------
 urlpatterns = [
     path("", include(router.urls)),
 ]

@@ -1,5 +1,5 @@
 # ===============================================
-# employee/serializers.py (Final Synced with emp_id-login system)
+# employee/serializers.py (Business-Ready — 2025-10-24)
 # ===============================================
 
 from rest_framework import serializers
@@ -9,9 +9,8 @@ import re
 
 User = get_user_model()
 
-
 # ===============================================================
-# DEPARTMENT SERIALIZER
+# ✅ DEPARTMENT SERIALIZER
 # ===============================================================
 class DepartmentSerializer(serializers.ModelSerializer):
     employee_count = serializers.SerializerMethodField(read_only=True)
@@ -19,13 +18,8 @@ class DepartmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Department
         fields = [
-            "id",
-            "name",
-            "description",
-            "is_active",
-            "employee_count",
-            "created_at",
-            "updated_at",
+            "id", "code", "name", "description", "is_active",
+            "employee_count", "created_at", "updated_at"
         ]
         read_only_fields = ["created_at", "updated_at", "employee_count"]
 
@@ -33,12 +27,20 @@ class DepartmentSerializer(serializers.ModelSerializer):
         return obj.employees.count()
 
     def validate_name(self, value):
-        qs = Department.objects.filter(name__iexact=value)
+        qs = Department.objects.filter(name__iexact=value, is_active=True)
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
         if qs.exists():
-            raise serializers.ValidationError("A department with this name already exists.")
+            raise serializers.ValidationError("Department with this name already exists.")
         return value.strip().title()
+
+    def validate_code(self, value):
+        qs = Department.objects.filter(code__iexact=value, is_active=True)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("Department with this code already exists.")
+        return value.strip().upper()
 
     def validate_is_active(self, value):
         if self.instance and not value:
@@ -48,126 +50,74 @@ class DepartmentSerializer(serializers.ModelSerializer):
 
 
 # ===============================================================
-# USER SUMMARY SERIALIZER (FOR ALL ROLES)
+# ✅ USER SUMMARY SERIALIZER
 # ===============================================================
 class UserSummarySerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = User
-        fields = [
-            "id",
-            "emp_id",
-            "first_name",
-            "last_name",
-            "full_name",
-            "email",
-            "role",
-        ]
+        fields = ["id", "emp_id", "first_name", "last_name", "full_name", "email", "role"]
 
     def get_full_name(self, obj):
-        first = obj.first_name or ""
-        last = obj.last_name or ""
-        return f"{first} {last}".strip()
+        return f"{obj.first_name or ''} {obj.last_name or ''}".strip()
 
 
 # ===============================================================
-# EMPLOYEE SERIALIZER (List / Detail)
+# ✅ EMPLOYEE SERIALIZER (List / Detail)
 # ===============================================================
 class EmployeeSerializer(serializers.ModelSerializer):
     user = UserSummarySerializer(read_only=True)
     department = DepartmentSerializer(read_only=True)
     department_name = serializers.CharField(source="department.name", read_only=True)
-    manager_name = serializers.SerializerMethodField(read_only=True)
+    department_code = serializers.ReadOnlyField(source="department.code")
+    manager_name = serializers.ReadOnlyField(read_only=True)
+    reporting_to = serializers.ReadOnlyField(source="reporting_to_name")
 
     emp_id = serializers.ReadOnlyField(source="user.emp_id")
     first_name = serializers.ReadOnlyField(source="user.first_name")
     last_name = serializers.ReadOnlyField(source="user.last_name")
-    full_name = serializers.ReadOnlyField(source="user.full_name")
+    full_name = serializers.SerializerMethodField(read_only=True)
     email = serializers.ReadOnlyField(source="user.email")
     role = serializers.ReadOnlyField(source="user.role")
 
     class Meta:
         model = Employee
         fields = [
-            "id",
-            "user",
-            "emp_id",
-            "first_name",
-            "last_name",
-            "full_name",
-            "email",
-            "contact_number",
-            "department",
-            "department_name",
-            "role",
-            "manager",
-            "manager_name",
-            "designation",
-            "status",
-            "joining_date",
-            "created_at",
-            "updated_at",
+            "id", "user", "emp_id", "first_name", "last_name", "full_name", "email",
+            "contact_number", "department", "department_name", "department_code",
+            "role", "manager", "manager_name", "reporting_to", "designation",
+            "status", "is_active", "joining_date", "created_at", "updated_at"
         ]
         read_only_fields = ["created_at", "updated_at"]
 
-    def get_manager_name(self, obj):
-        if obj.manager and obj.manager.user:
-            first = obj.manager.user.first_name or ""
-            last = obj.manager.user.last_name or ""
-            return f"{first} {last}".strip()
-        return None
+    def get_full_name(self, obj):
+        return f"{obj.user.first_name or ''} {obj.user.last_name or ''}".strip()
 
 
 # ===============================================================
-# EMPLOYEE CREATE / UPDATE SERIALIZER
+# ✅ EMPLOYEE CREATE / UPDATE SERIALIZER (Business Logic Aligned)
 # ===============================================================
 class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
-    """
-    Create/Update Employee:
-    - emp_id auto-generated and used as username
-    - password auto-generated securely
-    - department and manager editable
-    """
-
     email = serializers.EmailField(write_only=True)
     first_name = serializers.CharField(write_only=True)
     last_name = serializers.CharField(write_only=True)
     role = serializers.ChoiceField(choices=User.ROLE_CHOICES, write_only=True)
 
-    department_id = serializers.PrimaryKeyRelatedField(
-        queryset=Department.objects.all(),
-        source="department",
-        write_only=True,
-        required=False,
-    )
-    manager = serializers.PrimaryKeyRelatedField(
-        queryset=Employee.objects.all(),
-        required=False,
-        allow_null=True,
-    )
-
+    department_code = serializers.CharField(write_only=True, required=False)
+    manager = serializers.CharField(write_only=True, required=False, allow_null=True)
     emp_id = serializers.ReadOnlyField(source="user.emp_id")
 
     class Meta:
         model = Employee
         fields = [
-            "id",
-            "email",
-            "emp_id",
-            "first_name",
-            "last_name",
-            "role",
-            "contact_number",
-            "department_id",
-            "manager",
-            "designation",
-            "status",
-            "joining_date",
+            "id", "email", "emp_id", "first_name", "last_name", "role",
+            "contact_number", "department_code", "manager", "designation",
+            "status", "is_active", "joining_date"
         ]
 
     # =====================================================
-    # FIELD VALIDATION
+    # VALIDATIONS
     # =====================================================
     def validate_first_name(self, value):
         if not re.match(r"^[A-Za-z ]+$", value):
@@ -180,13 +130,9 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
         return value.strip().title()
 
     def validate_contact_number(self, value):
-        """Ensure contact number is valid and unique."""
         pattern = r"^\+91[6-9]\d{9}$"
         if not re.match(pattern, value):
-            raise serializers.ValidationError(
-                "Contact number must start with +91 and be a valid 10-digit Indian mobile number."
-            )
-
+            raise serializers.ValidationError("Contact number must start with +91 and be a valid 10-digit Indian number.")
         qs = Employee.objects.filter(contact_number=value)
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
@@ -194,24 +140,49 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("This contact number is already assigned to another employee.")
         return value
 
-    def validate_manager(self, value):
-        if value and self.instance and value.id == self.instance.id:
-            raise serializers.ValidationError("An employee cannot be their own manager.")
-        if value and value.user.role != "Manager":
-            raise serializers.ValidationError("Assigned manager must have a Manager role.")
-        return value
-
     # =====================================================
     # CREATE
     # =====================================================
     def create(self, validated_data):
-        department = validated_data.pop("department", None)
+        department_code = validated_data.pop("department_code", None)
+        manager_emp_id = validated_data.pop("manager", None)
+
+        # --- Department lookup ---
+        department = None
+        if department_code:
+            try:
+                department = Department.objects.get(code__iexact=department_code)
+            except Department.DoesNotExist:
+                raise serializers.ValidationError({
+                    "department_code": f"Department with code '{department_code}' not found."
+                })
+            if not department.is_active:
+                raise serializers.ValidationError({
+                    "department_code": f"Cannot assign employee to inactive department '{department_code}'."
+                })
+
+        # --- Manager lookup ---
+        manager = None
+        if manager_emp_id:
+            try:
+                manager = Employee.objects.get(user__emp_id__iexact=manager_emp_id)
+            except Employee.DoesNotExist:
+                raise serializers.ValidationError({
+                    "manager": f"Manager with emp_id '{manager_emp_id}' not found."
+                })
+            if manager.user.role != "Manager":
+                raise serializers.ValidationError({
+                    "manager": f"Assigned manager '{manager_emp_id}' is not a Manager role."
+                })
+
         email = validated_data.pop("email")
         first_name = validated_data.pop("first_name")
         last_name = validated_data.pop("last_name")
         role = validated_data.pop("role")
 
-        # 🔹 Create User (username auto-generated in UserManager)
+        if User.objects.filter(email__iexact=email).exists():
+            raise serializers.ValidationError({"email": "A user with this email already exists."})
+
         user = User.objects.create_user(
             email=email,
             first_name=first_name,
@@ -219,35 +190,53 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
             role=role,
         )
 
-        # 🔹 Create linked Employee record
-        employee = Employee.objects.create(user=user, department=department, **validated_data)
+        employee = Employee.objects.create(
+            user=user,
+            department=department,
+            manager=manager,
+            **validated_data,
+        )
         return employee
 
     # =====================================================
     # UPDATE
     # =====================================================
     def update(self, instance, validated_data):
-        department = validated_data.pop("department", None)
-        if department:
+        department_code = validated_data.pop("department_code", None)
+        if department_code:
+            try:
+                department = Department.objects.get(code__iexact=department_code)
+            except Department.DoesNotExist:
+                raise serializers.ValidationError({
+                    "department_code": f"Department with code '{department_code}' not found."
+                })
+            if not department.is_active:
+                raise serializers.ValidationError({
+                    "department_code": f"Cannot assign employee to inactive department '{department_code}'."
+                })
             instance.department = department
 
+        manager_emp_id = validated_data.pop("manager", None)
+        if manager_emp_id:
+            try:
+                manager = Employee.objects.get(user__emp_id__iexact=manager_emp_id)
+            except Employee.DoesNotExist:
+                raise serializers.ValidationError({
+                    "manager": f"Manager with emp_id '{manager_emp_id}' not found."
+                })
+            if manager.user.role != "Manager":
+                raise serializers.ValidationError({
+                    "manager": f"Assigned manager '{manager_emp_id}' is not a Manager role."
+                })
+            instance.manager = manager
+
         user = instance.user
-        user_fields = ["email", "first_name", "last_name", "role"]
-        for field in user_fields:
+        for field in ["email", "first_name", "last_name", "role"]:
             if field in validated_data:
                 setattr(user, field, validated_data.pop(field))
         user.save()
 
-        allowed_fields = {
-            "contact_number",
-            "manager",
-            "designation",
-            "status",
-            "joining_date",
-        }
         for field, value in validated_data.items():
-            if field in allowed_fields:
-                setattr(instance, field, value)
-
+            setattr(instance, field, value)
         instance.save()
         return instance

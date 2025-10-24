@@ -1,5 +1,5 @@
 # ===============================================
-# users/views.py  (Updated / Fixed - Combined ChangePasswordView)
+# users/views.py  (Frontend-Aligned & Demo Ready — 2025-10-24)
 # ===============================================
 
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
@@ -82,78 +82,63 @@ class RegisterView(generics.CreateAPIView):
 # =====================================================
 class ChangePasswordView(APIView):
     """
-    Single endpoint to handle both:
-    1) First-time password change (user has temp password -> provide username + old_password)
-    2) Authenticated password change (user sends Bearer token)
-    Use:
-      POST /api/users/change-password/
-    Payload (first-time):
-      {
-        "username": "EMP0001",
-        "old_password": "tempPass123",
-        "new_password": "NewStrongPass@123",
-        "confirm_password": "NewStrongPass@123"
-      }
-    Payload (authenticated):
-      {
-        "old_password": "currentPass",
-        "new_password": "NewStrongPass@123",
-        "confirm_password": "NewStrongPass@123"
-      }
+    Handles both:
+    1️⃣ First-time password change (temp password)
+    2️⃣ Authenticated password change (with JWT)
     """
-    permission_classes = [AllowAny]  # we will handle auth logic internally
+    permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
-        """
-        Accepts either:
-        - username + old_password (useful for first-time password reset when force_password_change=True), OR
-        - Authorization: Bearer <token> header (authenticated user).
-        """
         username = request.data.get("username")
         old_password = request.data.get("old_password")
         new_password = request.data.get("new_password")
         confirm_password = request.data.get("confirm_password")
 
-        # Basic validation for new passwords
+        # Validate new passwords
         if not new_password or not confirm_password:
-            return Response({"detail": "New password and confirm password are required."},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "New password and confirm password are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if new_password != confirm_password:
             return Response({"detail": "New passwords do not match."}, status=status.HTTP_400_BAD_REQUEST)
 
         user = None
 
-        # Case A: username + old_password provided -> try to authenticate (first-time or username-based change)
+        # Case 1️⃣: First-time login (username + old password)
         if username and old_password:
             user = authenticate(username=username, password=old_password)
             if not user:
                 return Response({"detail": "Invalid username or old password."}, status=status.HTTP_400_BAD_REQUEST)
         else:
-            # Case B: try to use authenticated user via token
+            # Case 2️⃣: Authenticated user via JWT
             if request.user and request.user.is_authenticated:
                 user = request.user
-                # For safety, require old_password in authenticated flow as well (optional, but recommended)
-                # If you want to allow changing without providing old_password (e.g., admin forced flow), you can adjust here.
                 if not old_password:
-                    return Response({"detail": "Old password is required for authenticated password change."},
-                                    status=status.HTTP_400_BAD_REQUEST)
+                    return Response(
+                        {"detail": "Old password is required for authenticated password change."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
                 if not user.check_password(old_password):
                     return Response({"detail": "Old password is incorrect."}, status=status.HTTP_400_BAD_REQUEST)
             else:
-                # No username/old_password and no valid token
-                return Response({"detail": "Authentication credentials were not provided."},
-                                status=status.HTTP_401_UNAUTHORIZED)
+                return Response(
+                    {"detail": "Authentication credentials were not provided."},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
 
-        # At this point 'user' is valid
+        # Update password and clear flag
         user.set_password(new_password)
-        # Clear force_password_change flag (covers first-time flow)
         user.force_password_change = False
         user.save(update_fields=["password", "force_password_change"])
 
-        return Response({"message": "Password changed successfully!"}, status=status.HTTP_200_OK)
+        return Response({"message": "✅ Password changed successfully!"}, status=status.HTTP_200_OK)
 
 
+# =====================================================
+# ✅ 5. PROFILE API (Self)
+# =====================================================
 class ProfileView(APIView):
     """Return current user's profile info."""
     permission_classes = [IsAuthenticated]
@@ -164,7 +149,7 @@ class ProfileView(APIView):
 
 
 # =====================================================
-# ✅ 5. ROLE LIST
+# ✅ 6. ROLE LIST
 # =====================================================
 class RoleListView(APIView):
     """Return available user roles."""
@@ -176,7 +161,7 @@ class RoleListView(APIView):
 
 
 # =====================================================
-# ✅ 6. USER LIST (Admin Only)
+# ✅ 7. USER LIST (Admin Only)
 # =====================================================
 class UserListView(generics.ListAPIView):
     """List all users (Admins only)."""
@@ -184,8 +169,20 @@ class UserListView(generics.ListAPIView):
     serializer_class = ProfileSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ["username", "emp_id", "email", "first_name", "last_name"]
-    ordering_fields = ["emp_id", "username"]
+    search_fields = ["username", "emp_id", "email", "first_name", "last_name", "status"]
+    ordering_fields = ["emp_id", "username", "joining_date"]
+
+    def get_queryset(self):
+        """Filter users by status or department."""
+        qs = super().get_queryset()
+        status_param = self.request.query_params.get("status")
+        department_param = self.request.query_params.get("department")
+
+        if status_param:
+            qs = qs.filter(status__iexact=status_param)
+        if department_param:
+            qs = qs.filter(department__name__icontains=department_param)
+        return qs
 
     def list(self, request, *args, **kwargs):
         user = request.user
@@ -198,7 +195,7 @@ class UserListView(generics.ListAPIView):
 
 
 # =====================================================
-# ✅ 7. ADMIN RESET PASSWORD
+# ✅ 8. ADMIN RESET PASSWORD
 # =====================================================
 @api_view(["POST"])
 @permission_classes([IsAdminUser])
