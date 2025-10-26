@@ -196,7 +196,7 @@ class RoleListView(APIView):
 
 
 # ===========================================================
-# ✅ 7. USER LIST (Admin Only)
+# ✅ 7. USER LIST (Admin Only, Added emp_id Filter)
 # ===========================================================
 class UserListView(generics.ListAPIView):
     """Lists all users — visible to Admins only."""
@@ -211,17 +211,23 @@ class UserListView(generics.ListAPIView):
         qs = super().get_queryset()
         status_param = self.request.query_params.get("status")
         dept_param = self.request.query_params.get("department")
+        emp_id_param = self.request.query_params.get("emp_id")
 
         if status_param:
             qs = qs.filter(status__iexact=status_param)
         if dept_param:
             qs = qs.filter(department__name__icontains=dept_param)
+        if emp_id_param:
+            qs = qs.filter(emp_id__iexact=emp_id_param)
         return qs
 
     def list(self, request, *args, **kwargs):
         user = request.user
         if not (user.is_superuser or getattr(user, "role", None) == "Admin"):
-            return Response({"error": "Access denied. Admins only."}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"error": "Access denied. Admins only."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         return super().list(request, *args, **kwargs)
 
 
@@ -258,62 +264,107 @@ def reset_password(request):
 
 
 # ===========================================================
-# ✅ 9. USER DETAIL (GET / PATCH / DELETE) — Admin Only
+# ✅ 9. USER DETAIL (GET / PATCH / DELETE — Soft Delete)
 # ===========================================================
 class UserDetailView(APIView):
     """
     Admins can:
     - GET: Fetch user by emp_id
-    - PATCH: Update fields (phone, email, verification, etc.)
-    - DELETE: Remove user safely
+    - PATCH: Update user details (phone, email, department, etc.)
+    - DELETE: Soft delete user (mark Inactive instead of removing)
     """
     permission_classes = [permissions.IsAuthenticated]
 
     def get_object(self, emp_id):
+        """Fetch a user object by emp_id or return None."""
         try:
             return User.objects.get(emp_id=emp_id)
         except User.DoesNotExist:
             return None
 
+    # -------------------------------------------------------
+    # 🔹 GET — Fetch user details
+    # -------------------------------------------------------
     def get(self, request, emp_id):
         user = self.get_object(emp_id)
         if not user:
-            return Response({"error": f"User with emp_id '{emp_id}' not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"error": f"User with emp_id '{emp_id}' not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         serializer = ProfileSerializer(user)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+    # -------------------------------------------------------
+    # 🔹 PATCH — Admin Update User
+    # -------------------------------------------------------
     def patch(self, request, emp_id):
         current_user = request.user
         if not (current_user.is_superuser or getattr(current_user, "role", None) == "Admin"):
-            return Response({"error": "Access denied. Only Admins can update users."}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"error": "Access denied. Only Admins can update users."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         user = self.get_object(emp_id)
         if not user:
-            return Response({"error": f"User with emp_id '{emp_id}' not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"error": f"User with emp_id '{emp_id}' not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         editable_fields = ["first_name", "last_name", "email", "phone", "is_verified", "status", "department"]
+
         for field, value in request.data.items():
             if field in editable_fields:
                 setattr(user, field, value)
+
         user.save(update_fields=[f for f in request.data.keys() if f in editable_fields])
 
         serializer = ProfileSerializer(user)
         return Response(
-            {"message": f"✅ User '{emp_id}' updated successfully!", "user": serializer.data},
+            {
+                "message": f"✅ User '{emp_id}' updated successfully!",
+                "user": serializer.data,
+            },
             status=status.HTTP_200_OK,
         )
 
+    # -------------------------------------------------------
+    # 🔹 DELETE — Soft Delete (Mark as Inactive)
+    # -------------------------------------------------------
     def delete(self, request, emp_id):
         current_user = request.user
-        if not (current_user.is_superuser or getattr(current_user, "role", None) == "Admin"):
-            return Response({"error": "Access denied. Only Admins can delete users."}, status=status.HTTP_403_FORBIDDEN)
+        if not (current_user.is_superuser or getattr(current_user, "role", "") == "Admin"):
+            return Response(
+                {"error": "Access denied. Only Admins can deactivate users."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
-        user = self.get_object(emp_id)
-        if not user:
-            return Response({"error": f"User with emp_id '{emp_id}' not found."}, status=status.HTTP_404_NOT_FOUND)
+        user_to_deactivate = self.get_object(emp_id)
+        if not user_to_deactivate:
+            return Response(
+                {"error": f"User with emp_id '{emp_id}' not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
-        if user == current_user:
-            return Response({"error": "You cannot delete your own account."}, status=status.HTTP_400_BAD_REQUEST)
+        if user_to_deactivate == current_user:
+            return Response(
+                {"error": "You cannot deactivate your own account."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        user.delete()
-        return Response({"message": f"✅ User '{emp_id}' deleted successfully."}, status=status.HTTP_200_OK)
+        # Perform soft delete
+        user_to_deactivate.is_active = False
+        user_to_deactivate.status = "Inactive"
+        user_to_deactivate.save(update_fields=["is_active", "status"])
+
+        return Response(
+            {
+                "message": f"✅ User '{emp_id}' has been deactivated (soft deleted).",
+                "emp_id": emp_id,
+                "status": user_to_deactivate.status,
+                "is_active": user_to_deactivate.is_active,
+            },
+            status=status.HTTP_200_OK,
+        )

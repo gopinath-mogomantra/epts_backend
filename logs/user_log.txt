@@ -68,3 +68,41 @@
 [2025-10-27 01:20:15,575] INFO — Temp password recreated for EMP0016 (deepak.hr, deepak.hr@epts.com) => Deepak@6357
 [2025-10-27 01:20:17,794] INFO — Temp password recreated for EMP0017 (sneha.hr, sneha.hr@epts.com) => Sneha@2928
 [2025-10-27 01:20:19,969] INFO — Temp password recreated for EMP0018 (alok.hr, alok.hr@epts.com) => Alok@9984
+[2025-10-27 01:23:35] emp_id=EMP0019, username=sanjay.sm, email=sanjay.sm@epts.com
+[2025-10-27 01:23:35,614] INFO — Temp password created for EMP0019 (sanjay.sm, sanjay.sm@epts.com) → Sanjay@6728
+[2025-10-27 01:23:37] emp_id=EMP0020, username=rekha.sm, email=rekha.sm@epts.com
+[2025-10-27 01:23:37,763] INFO — Temp password created for EMP0020 (rekha.sm, rekha.sm@epts.com) → Rekha@0929
+[2025-10-27 01:23:39] emp_id=EMP0021, username=karan.sm, email=karan.sm@epts.com
+[2025-10-27 01:23:39,560] INFO — Temp password created for EMP0021 (karan.sm, karan.sm@epts.com) → Karan@2308
+[2025-10-27 01:23:41] emp_id=EMP0022, username=tanya.sm, email=tanya.sm@epts.com
+[2025-10-27 01:23:41,132] INFO — Temp password created for EMP0022 (tanya.sm, tanya.sm@epts.com) → Tanya@3716
+[2025-10-27 01:23:43] emp_id=EMP0023, username=dev.sm, email=dev.sm@epts.com
+[2025-10-27 01:23:43,064] INFO — Temp password created for EMP0023 (dev.sm, dev.sm@epts.com) → Dev@4333
+[2025-10-27 01:23:44] emp_id=EMP0024, username=rani.sm, email=rani.sm@epts.com
+[2025-10-27 01:23:44,898] INFO — Temp password created for EMP0024 (rani.sm, rani.sm@epts.com) → Rani@5801
+[2025-10-27 01:24:40] emp_id=EMP0025, username=amit.qa, email=amit.qa@epts.com
+[2025-10-27 01:24:40,308] INFO — Temp password created for EMP0025 (amit.qa, amit.qa@epts.com) → Amit@4354
+[2025-10-27 01:24:46] emp_id=EMP0026, username=pooja.qa, email=pooja.qa@epts.com
+[2025-10-27 01:24:46,862] INFO — Temp password created for EMP0026 (pooja.qa, pooja.qa@epts.com) → Pooja@0514
+[2025-10-27 01:24:53] emp_id=EMP0027, username=vikram.qa, email=vikram.qa@epts.com
+[2025-10-27 01:24:53,316] INFO — Temp password created for EMP0027 (vikram.qa, vikram.qa@epts.com) → Vikram@3531
+[2025-10-27 01:25:00] emp_id=EMP0028, username=nisha.qa, email=nisha.qa@epts.com
+[2025-10-27 01:25:00,572] INFO — Temp password created for EMP0028 (nisha.qa, nisha.qa@epts.com) → Nisha@8676
+[2025-10-27 01:25:09] emp_id=EMP0029, username=manish.qa, email=manish.qa@epts.com
+[2025-10-27 01:25:09,375] INFO — Temp password created for EMP0029 (manish.qa, manish.qa@epts.com) → Manish@6107
+[2025-10-27 01:25:15] emp_id=EMP0030, username=leena.qa, email=leena.qa@epts.com
+[2025-10-27 01:25:15,393] INFO — Temp password created for EMP0030 (leena.qa, leena.qa@epts.com) → Leena@4349
+[2025-10-27 01:26:34] emp_id=EMP0031, username=rahul.fin, email=rahul.fin@epts.com
+[2025-10-27 01:26:34,494] INFO — Temp password created for EMP0031 (rahul.fin, rahul.fin@epts.com) → Rahul@4956
+[2025-10-27 01:26:41] emp_id=EMP0032, username=priya.fin, email=priya.fin@epts.com
+[2025-10-27 01:26:41,497] INFO — Temp password created for EMP0032 (priya.fin, priya.fin@epts.com) → Priya@6083
+[2025-10-27 01:26:48] emp_id=EMP0033, username=deepak.fin, email=deepak.fin@epts.com
+[2025-10-27 01:26:48,242] INFO — Temp password created for EMP0033 (deepak.fin, deepak.fin@epts.com) → Deepak@6276
+[2025-10-27 01:26:54] emp_id=EMP0034, username=meera.fin, email=meera.fin@epts.com
+[2025-10-27 01:26:54,215] INFO — Temp password created for EMP0034 (meera.fin, meera.fin@epts.com) → Meera@5913
+[2025-10-27 01:26:59] emp_id=EMP0035, username=alok.fin, email=alok.fin@epts.com
+[2025-10-27 01:26:59,952] INFO — Temp password created for EMP0035 (alok.fin, alok.fin@epts.com) → Alok@6756
+[2025-10-27 01:27:06] emp_id=EMP0036, username=simran.fin, email=simran.fin@epts.com
+[2025-10-27 01:27:06,083] INFO — Temp password created for EMP0036 (simran.fin, simran.fin@epts.com) → Simran@3838
+[2025-10-27 01:34:45] emp_id=EMP0037, username=suresh.eng, email=suresh.eng@epts.com
+[2025-10-27 01:34:45,774] INFO — Temp password created for EMP0037 (suresh.eng, suresh.eng@epts.com) → Suresh@0962
