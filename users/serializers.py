@@ -1,15 +1,16 @@
 # ===========================================================
-# users/serializers.py 
+# users/serializers.py  (Final — Auto EmpID & Logged Temp Password)
 # ===========================================================
 
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import authenticate, get_user_model
-from django.contrib.auth.password_validation import validate_password
 import random
 import string
+import logging
 
 User = get_user_model()
+logger = logging.getLogger("temp_password_logger")
 
 
 # ===========================================================
@@ -23,14 +24,12 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     - Password change enforcement
     - JWT token generation
     """
-
     username_field = "username"
 
     def validate(self, attrs):
         login_input = attrs.get("username")
         password = attrs.get("password")
 
-        # Try login via emp_id or username
         user = None
         if User.objects.filter(emp_id=login_input).exists():
             user = User.objects.get(emp_id=login_input)
@@ -40,7 +39,6 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         if not user:
             raise serializers.ValidationError({"detail": "Invalid credentials."})
 
-        # Check lockout
         if user.account_locked:
             remaining = user.lock_remaining_time()
             if remaining:
@@ -51,7 +49,6 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             else:
                 user.unlock_account()
 
-        # Authenticate using emp_id
         authenticated_user = authenticate(username=user.emp_id, password=password)
         if not authenticated_user:
             user.increment_failed_attempts()
@@ -64,17 +61,14 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 "detail": f"Invalid credentials. {remaining} attempts left."
             })
 
-        # Reset attempts
         user.reset_login_attempts()
 
-        # Check for force password change
         if getattr(user, "force_password_change", False):
             raise serializers.ValidationError({
                 "force_password_change": True,
                 "detail": "You must change your password before logging in."
             })
 
-        # Generate JWT
         data = super().validate({"username": user.emp_id, "password": password})
         data["user"] = {
             "id": user.id,
@@ -93,18 +87,9 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 
 # ===========================================================
-# ✅ REGISTRATION SERIALIZER
+# ✅ REGISTER SERIALIZER (Auto EmpID + Temp Password + Logging)
 # ===========================================================
 class RegisterSerializer(serializers.ModelSerializer):
-    """
-    Handles new user registration.
-    - emp_id auto-generated
-    - Optional password (auto-random if not provided)
-    - Includes password confirmation for frontend validation
-    """
-
-    password = serializers.CharField(write_only=True, required=False)
-    password2 = serializers.CharField(write_only=True, required=False)
     full_name = serializers.SerializerMethodField(read_only=True)
     department_name = serializers.CharField(source="department.name", read_only=True)
 
@@ -123,8 +108,6 @@ class RegisterSerializer(serializers.ModelSerializer):
             "phone",
             "role",
             "status",
-            "password",
-            "password2",
             "joining_date",
         ]
         read_only_fields = ["id", "emp_id"]
@@ -132,24 +115,47 @@ class RegisterSerializer(serializers.ModelSerializer):
     def get_full_name(self, obj):
         return f"{obj.first_name or ''} {obj.last_name or ''}".strip()
 
-    def validate(self, attrs):
-        password = attrs.get("password")
-        password2 = attrs.get("password2")
-        if password or password2:
-            if password != password2:
-                raise serializers.ValidationError({"password": "Passwords do not match."})
-        return attrs
-
     def create(self, validated_data):
-        validated_data.pop("password2", None)
-        password = validated_data.pop("password", None)
+        # 1️⃣ Auto-generate Emp ID
+        last_user = User.objects.order_by('-id').first()
+        if last_user and last_user.emp_id and last_user.emp_id.startswith("EMP"):
+            try:
+                last_num = int(last_user.emp_id.replace("EMP", ""))
+            except ValueError:
+                last_num = 0
+        else:
+            last_num = 0
+        new_emp_id = f"EMP{last_num + 1:04d}"
 
-        # Auto-generate secure password if not provided
-        if not password:
-            password = "".join(random.choices(string.ascii_letters + string.digits + "!@#$%^&*", k=10))
+        # 2️⃣ Auto-generate Secure Temp Password
+        first_name = validated_data.get("first_name", "User").capitalize()
+        random_part = "".join(random.choices(string.digits, k=4))
+        temp_password = f"{first_name}@{random_part}"
 
-        user = User.objects.create_user(password=password, **validated_data)
+        # 3️⃣ Create User
+        user = User.objects.create_user(
+            emp_id=new_emp_id,
+            password=temp_password,
+            **validated_data
+        )
+
+        # 4️⃣ Force password change at first login
+        user.force_password_change = True
+        user.save(update_fields=["force_password_change"])
+
+        # 5️⃣ Log temp password (for testing)
+        logger.info(
+            f"Temp password created for {user.emp_id} ({user.username}, {user.email}) → {temp_password}"
+        )
+
+        # Attach password for API response
+        user.temp_password = temp_password
         return user
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        rep["temp_password"] = getattr(instance, "temp_password", None)
+        return rep
 
 
 # ===========================================================
@@ -174,11 +180,12 @@ class ChangePasswordSerializer(serializers.Serializer):
 
 
 # ===========================================================
-# ✅ PROFILE SERIALIZER (Read-Only)
+# ✅ PROFILE SERIALIZER
 # ===========================================================
 class ProfileSerializer(serializers.ModelSerializer):
     department_name = serializers.CharField(source="department.name", read_only=True)
     full_name = serializers.SerializerMethodField(read_only=True)
+    joining_date = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = User
@@ -199,7 +206,22 @@ class ProfileSerializer(serializers.ModelSerializer):
             "is_verified",
             "is_active",
         ]
-        read_only_fields = fields
+        read_only_fields = [
+            "id",
+            "emp_id",
+            "joining_date",
+            "is_verified",
+            "is_active",
+        ]
 
     def get_full_name(self, obj):
         return f"{obj.first_name or ''} {obj.last_name or ''}".strip()
+    
+    def get_joining_date(self, obj):
+        """
+        Ensures joining_date is serialized as a pure date even if it's a datetime object.
+        """
+        if obj.joining_date:
+            # If joining_date has .date() (meaning it's datetime), convert to date
+            return obj.joining_date.date() if hasattr(obj.joining_date, "date") else obj.joining_date
+        return None

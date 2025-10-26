@@ -1,0 +1,70 @@
+[2025-10-27 00:30:26] emp_id=EMP0002, username=ravi.eng, email=ravi.eng@epts.com
+[2025-10-27 00:34:19] emp_id=EMP0003, username=ravi.mgr, email=ravi.mgr@epts.com
+[2025-10-27 00:54:08] emp_id=EMP0002, username=raj.eng, email=raj.eng@epts.com
+[2025-10-27 00:54:26] emp_id=EMP0003, username=neha.hr, email=neha.hr@epts.com
+[2025-10-27 00:54:33] emp_id=EMP0004, username=arjun.sm, email=arjun.sm@epts.com
+[2025-10-27 00:54:40] emp_id=EMP0005, username=kavita.qa, email=kavita.qa@epts.com
+[2025-10-27 00:54:48] emp_id=EMP0006, username=rakesh.fin, email=rakesh.fin@epts.com
+[2025-10-27 01:02:40] emp_id=EMP0007, username=suresh.eng, email=suresh.eng@epts.com
+[2025-10-27 01:03:05] emp_id=EMP0008, username=meena.eng, email=meena.eng@epts.com
+[2025-10-27 01:03:25] emp_id=EMP0009, username=vijay.eng, email=vijay.eng@epts.com
+[2025-10-27 01:03:38] emp_id=EMP0010, username=pooja.eng, email=pooja.eng@epts.com
+[2025-10-27 01:03:50] emp_id=EMP0011, username=ajay.eng, email=ajay.eng@epts.com
+[2025-10-27 01:04:00] emp_id=EMP0012, username=neeraj.eng, email=neeraj.eng@epts.com
+[2025-10-27 01:08:46] emp_id=EMP0013, username=anita.hr, email=anita.hr@epts.com
+[2025-10-27 01:08:48] emp_id=EMP0014, username=rohit.hr, email=rohit.hr@epts.com
+[2025-10-27 01:08:49] emp_id=EMP0015, username=sonal.hr, email=sonal.hr@epts.com
+[2025-10-27 01:08:51] emp_id=EMP0016, username=deepak.hr, email=deepak.hr@epts.com
+[2025-10-27 01:08:53] emp_id=EMP0017, username=sneha.hr, email=sneha.hr@epts.com
+[2025-10-27 01:08:54] emp_id=EMP0018, username=alok.hr, email=alok.hr@epts.com
+[2025-10-27 01:17:32,859] INFO — Temp password recreated for EMP0002 (raj.eng, raj.eng@epts.com) => Raj@2580
+[2025-10-27 01:17:34,097] INFO — Temp password recreated for EMP0003 (neha.hr, neha.hr@epts.com) => Neha@0002
+[2025-10-27 01:17:35,410] INFO — Temp password recreated for EMP0004 (arjun.sm, arjun.sm@epts.com) => Arjun@0414
+[2025-10-27 01:17:36,649] INFO — Temp password recreated for EMP0005 (kavita.qa, kavita.qa@epts.com) => Kavita@1808
+[2025-10-27 01:17:37,819] INFO — Temp password recreated for EMP0006 (rakesh.fin, rakesh.fin@epts.com) => Rakesh@7208
+[2025-10-27 01:17:38,972] INFO — Temp password recreated for EMP0007 (suresh.eng, suresh.eng@epts.com) => Suresh@2904
+[2025-10-27 01:17:40,306] INFO — Temp password recreated for EMP0008 (meena.eng, meena.eng@epts.com) => Meena@8940
+[2025-10-27 01:17:41,503] INFO — Temp password recreated for EMP0009 (vijay.eng, vijay.eng@epts.com) => Vijay@9020
+[2025-10-27 01:17:42,711] INFO — Temp password recreated for EMP0010 (pooja.eng, pooja.eng@epts.com) => Pooja@9473
+[2025-10-27 01:17:43,912] INFO — Temp password recreated for EMP0011 (ajay.eng, ajay.eng@epts.com) => Ajay@1642
+[2025-10-27 01:17:45,200] INFO — Temp password recreated for EMP0012 (neeraj.eng, neeraj.eng@epts.com) => Neeraj@7389
+[2025-10-27 01:17:46,475] INFO — Temp password recreated for EMP0013 (anita.hr, anita.hr@epts.com) => Anita@1694
+[2025-10-27 01:17:47,783] INFO — Temp password recreated for EMP0014 (rohit.hr, rohit.hr@epts.com) => Rohit@9127
+[2025-10-27 01:17:49,168] INFO — Temp password recreated for EMP0015 (sonal.hr, sonal.hr@epts.com) => Sonal@5043
+[2025-10-27 01:17:50,547] INFO — Temp password recreated for EMP0016 (deepak.hr, deepak.hr@epts.com) => Deepak@1265
+[2025-10-27 01:17:51,959] INFO — Temp password recreated for EMP0017 (sneha.hr, sneha.hr@epts.com) => Sneha@8819
+[2025-10-27 01:17:53,507] INFO — Temp password recreated for EMP0018 (alok.hr, alok.hr@epts.com) => Alok@2345
+[2025-10-27 01:19:02,070] INFO — Temp password recreated for EMP0002 (raj.eng, raj.eng@epts.com) => Raj@7302
+[2025-10-27 01:19:03,403] INFO — Temp password recreated for EMP0003 (neha.hr, neha.hr@epts.com) => Neha@2927
+[2025-10-27 01:19:04,763] INFO — Temp password recreated for EMP0004 (arjun.sm, arjun.sm@epts.com) => Arjun@4265
+[2025-10-27 01:19:06,373] INFO — Temp password recreated for EMP0005 (kavita.qa, kavita.qa@epts.com) => Kavita@0899
+[2025-10-27 01:19:07,686] INFO — Temp password recreated for EMP0006 (rakesh.fin, rakesh.fin@epts.com) => Rakesh@2978
+[2025-10-27 01:19:09,081] INFO — Temp password recreated for EMP0007 (suresh.eng, suresh.eng@epts.com) => Suresh@0453
+[2025-10-27 01:19:10,616] INFO — Temp password recreated for EMP0008 (meena.eng, meena.eng@epts.com) => Meena@2562
+[2025-10-27 01:19:12,019] INFO — Temp password recreated for EMP0009 (vijay.eng, vijay.eng@epts.com) => Vijay@4083
+[2025-10-27 01:19:13,508] INFO — Temp password recreated for EMP0010 (pooja.eng, pooja.eng@epts.com) => Pooja@7947
+[2025-10-27 01:19:14,954] INFO — Temp password recreated for EMP0011 (ajay.eng, ajay.eng@epts.com) => Ajay@0829
+[2025-10-27 01:19:16,211] INFO — Temp password recreated for EMP0012 (neeraj.eng, neeraj.eng@epts.com) => Neeraj@4892
+[2025-10-27 01:19:17,771] INFO — Temp password recreated for EMP0013 (anita.hr, anita.hr@epts.com) => Anita@4539
+[2025-10-27 01:19:19,265] INFO — Temp password recreated for EMP0014 (rohit.hr, rohit.hr@epts.com) => Rohit@7420
+[2025-10-27 01:19:20,545] INFO — Temp password recreated for EMP0015 (sonal.hr, sonal.hr@epts.com) => Sonal@2699
+[2025-10-27 01:19:22,120] INFO — Temp password recreated for EMP0016 (deepak.hr, deepak.hr@epts.com) => Deepak@5845
+[2025-10-27 01:19:23,693] INFO — Temp password recreated for EMP0017 (sneha.hr, sneha.hr@epts.com) => Sneha@6216
+[2025-10-27 01:19:25,092] INFO — Temp password recreated for EMP0018 (alok.hr, alok.hr@epts.com) => Alok@6651
+[2025-10-27 01:19:53,950] INFO — Temp password recreated for EMP0002 (raj.eng, raj.eng@epts.com) => Raj@8817
+[2025-10-27 01:19:55,093] INFO — Temp password recreated for EMP0003 (neha.hr, neha.hr@epts.com) => Neha@9748
+[2025-10-27 01:19:56,286] INFO — Temp password recreated for EMP0004 (arjun.sm, arjun.sm@epts.com) => Arjun@8632
+[2025-10-27 01:19:57,646] INFO — Temp password recreated for EMP0005 (kavita.qa, kavita.qa@epts.com) => Kavita@5168
+[2025-10-27 01:19:58,816] INFO — Temp password recreated for EMP0006 (rakesh.fin, rakesh.fin@epts.com) => Rakesh@9849
+[2025-10-27 01:20:00,271] INFO — Temp password recreated for EMP0007 (suresh.eng, suresh.eng@epts.com) => Suresh@0270
+[2025-10-27 01:20:01,775] INFO — Temp password recreated for EMP0008 (meena.eng, meena.eng@epts.com) => Meena@6821
+[2025-10-27 01:20:03,163] INFO — Temp password recreated for EMP0009 (vijay.eng, vijay.eng@epts.com) => Vijay@6840
+[2025-10-27 01:20:04,684] INFO — Temp password recreated for EMP0010 (pooja.eng, pooja.eng@epts.com) => Pooja@5065
+[2025-10-27 01:20:06,161] INFO — Temp password recreated for EMP0011 (ajay.eng, ajay.eng@epts.com) => Ajay@8568
+[2025-10-27 01:20:07,846] INFO — Temp password recreated for EMP0012 (neeraj.eng, neeraj.eng@epts.com) => Neeraj@2997
+[2025-10-27 01:20:10,114] INFO — Temp password recreated for EMP0013 (anita.hr, anita.hr@epts.com) => Anita@5521
+[2025-10-27 01:20:11,718] INFO — Temp password recreated for EMP0014 (rohit.hr, rohit.hr@epts.com) => Rohit@0399
+[2025-10-27 01:20:13,413] INFO — Temp password recreated for EMP0015 (sonal.hr, sonal.hr@epts.com) => Sonal@4675
+[2025-10-27 01:20:15,575] INFO — Temp password recreated for EMP0016 (deepak.hr, deepak.hr@epts.com) => Deepak@6357
+[2025-10-27 01:20:17,794] INFO — Temp password recreated for EMP0017 (sneha.hr, sneha.hr@epts.com) => Sneha@2928
+[2025-10-27 01:20:19,969] INFO — Temp password recreated for EMP0018 (alok.hr, alok.hr@epts.com) => Alok@9984

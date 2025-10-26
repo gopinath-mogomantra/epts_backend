@@ -204,7 +204,7 @@ SWAGGER_SETTINGS = {
 # SIMPLE JWT SETTINGS
 # -------------------------------------------------------------------
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(hours=1),
+    "ACCESS_TOKEN_LIFETIME": timedelta(hours=24),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
@@ -284,82 +284,39 @@ SESSION_COOKIE_SAMESITE = "Lax"
 # -------------------------------------------------------------------
 # LOGGING CONFIGURATION
 # -------------------------------------------------------------------
+import os
+
+LOG_DIR = os.path.join(BASE_DIR, "logs")
+if not os.path.exists(LOG_DIR):
+    os.makedirs(LOG_DIR)
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
-        "verbose": {
-            "format": "[{asctime}] {levelname} {name} {module} {funcName}: {message}",
-            "style": "{",
-            "datefmt": "%Y-%m-%d %H:%M:%S",
-        },
-        "simple": {
-            "format": "[{levelname}] {message}",
-            "style": "{",
-        },
-    },
-    "filters": {
-        "require_debug_true": {
-            "()": "django.utils.log.RequireDebugTrue",
-        },
-        "require_debug_false": {
-            "()": "django.utils.log.RequireDebugFalse",
-        },
+        "verbose": {"format": "[%(asctime)s] %(levelname)s — %(message)s"},
     },
     "handlers": {
-        "console": {
+        "temp_password_file": {
             "level": "INFO",
-            "class": "logging.StreamHandler",
+            "class": "logging.FileHandler",
+            "filename": os.path.join(LOG_DIR, "user_log.txt"),
             "formatter": "verbose",
+            "encoding": "utf-8",
         },
-        "file": {
-            "level": "ERROR",
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": BASE_DIR / "logs" / "django_errors.log",
-            "maxBytes": 1024 * 1024 * 10,
-            "backupCount": 5,
+        "console": {
+            "class": "logging.StreamHandler",
             "formatter": "verbose",
         },
     },
     "loggers": {
-        "django": {
-            "handlers": ["console"],
+        "temp_password_logger": {
+            "handlers": ["temp_password_file", "console"],
             "level": "INFO",
             "propagate": False,
         },
-        "django.request": {
-            "handlers": ["console", "file"],
-            "level": "ERROR",
-            "propagate": False,
-        },
-        "django.db.backends": {
-            "handlers": ["console"],
-            "level": "WARNING",
-            "propagate": False,
-        },
-        "users": {
-            "handlers": ["console"],
-            "level": "DEBUG" if DEBUG else "INFO",
-            "propagate": False,
-        },
-        "employee": {
-            "handlers": ["console"],
-            "level": "DEBUG" if DEBUG else "INFO",
-            "propagate": False,
-        },
-        "performance": {
-            "handlers": ["console"],
-            "level": "DEBUG" if DEBUG else "INFO",
-            "propagate": False,
-        },
-    },
-    "root": {
-        "handlers": ["console"],
-        "level": "INFO",
     },
 }
-
-os.makedirs(BASE_DIR / "logs", exist_ok=True)
 
 # -------------------------------------------------------------------
 # EMAIL CONFIGURATION (For notifications)
