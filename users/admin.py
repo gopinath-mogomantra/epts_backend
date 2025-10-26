@@ -1,12 +1,12 @@
 # ===============================================
-# users/admin.py (Final Verified Version)
+# users/admin.py (Final Verified — Frontend & Admin Dashboard Aligned)
 # ===============================================
 # Django Admin configuration for the custom User model.
 # Features:
-# - Color-coded roles (Admin/Manager/Employee)
-# - Account lock/unlock controls with expiry timer
-# - Department integration
-# - Inline search, filtering, and query optimization
+# ✅ Color-coded roles (Admin / Manager / Employee)
+# ✅ Account lock/unlock with auto-expiry (2 hours)
+# ✅ Department integration
+# ✅ Inline search, filters, and optimized queries
 # ===============================================
 
 from django.contrib import admin, messages
@@ -20,10 +20,10 @@ from .models import User
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
-    """Custom admin interface for the User model."""
+    """Custom Django admin configuration for the User model."""
 
     # ------------------------------------------------------
-    # Columns in list display
+    # 🔹 List Display Configuration
     # ------------------------------------------------------
     list_display = (
         "emp_id",
@@ -42,7 +42,7 @@ class UserAdmin(BaseUserAdmin):
     )
 
     # ------------------------------------------------------
-    # Filters (right sidebar)
+    # 🔹 Filters (Sidebar)
     # ------------------------------------------------------
     list_filter = (
         "role",
@@ -55,7 +55,7 @@ class UserAdmin(BaseUserAdmin):
     )
 
     # ------------------------------------------------------
-    # Search fields
+    # 🔹 Searchable Fields
     # ------------------------------------------------------
     search_fields = (
         "emp_id",
@@ -68,7 +68,7 @@ class UserAdmin(BaseUserAdmin):
     )
 
     # ------------------------------------------------------
-    # General display and behavior
+    # 🔹 Display Settings
     # ------------------------------------------------------
     ordering = ("emp_id",)
     list_per_page = 25
@@ -83,7 +83,7 @@ class UserAdmin(BaseUserAdmin):
     )
 
     # ------------------------------------------------------
-    # Fieldsets (Detail Page)
+    # 🔹 Fieldsets (Detail Page Layout)
     # ------------------------------------------------------
     fieldsets = (
         (_("Login Info"), {"fields": ("username", "email", "password")}),
@@ -132,7 +132,7 @@ class UserAdmin(BaseUserAdmin):
     )
 
     # ------------------------------------------------------
-    # Add User Page Configuration
+    # 🔹 Add User Page Configuration
     # ------------------------------------------------------
     add_fieldsets = (
         (
@@ -156,7 +156,7 @@ class UserAdmin(BaseUserAdmin):
     )
 
     # ------------------------------------------------------
-    # Custom Display Helpers
+    # 🔹 Custom Display Helpers
     # ------------------------------------------------------
     def get_full_name(self, obj):
         """Return user's full name or fallback to username."""
@@ -164,39 +164,42 @@ class UserAdmin(BaseUserAdmin):
     get_full_name.short_description = "Full Name"
 
     def colored_role(self, obj):
-        """Color-coded display for roles."""
+        """Display role with color coding in admin list."""
         color_map = {"Admin": "green", "Manager": "orange", "Employee": "blue"}
         color = color_map.get(obj.role, "black")
         return format_html(f"<b><span style='color:{color}'>{obj.role}</span></b>")
     colored_role.short_description = "Role"
 
     def get_department(self, obj):
-        """Display department name if available."""
+        """Show department name if assigned."""
         return obj.department.name if obj.department else "-"
     get_department.short_description = "Department"
 
     def lock_expiry_time(self, obj):
-        """Show remaining lock time (auto-unlocks after 2h)."""
+        """Show remaining lock time (auto-unlocks after 2 hours)."""
         if obj.account_locked and obj.locked_at:
             expiry = obj.locked_at + timedelta(hours=2)
             remaining = expiry - timezone.now()
             if remaining.total_seconds() > 0:
                 hrs = int(remaining.total_seconds() // 3600)
                 mins = int((remaining.total_seconds() % 3600) // 60)
-                return format_html(f"<span style='color:red;'>Unlocks in {hrs}h {mins}m</span>")
+                return format_html(
+                    f"<span style='color:red;'>Unlocks in {hrs}h {mins}m</span>"
+                )
             return format_html("<span style='color:green;'>Ready to unlock</span>")
         return "-"
     lock_expiry_time.short_description = "Lock Expiry"
 
     # ------------------------------------------------------
-    # Query Optimization
+    # 🔹 Query Optimization
     # ------------------------------------------------------
     def get_queryset(self, request):
+        """Optimize query with department joins."""
         qs = super().get_queryset(request)
         return qs.select_related("department")
 
     # ------------------------------------------------------
-    # Admin Actions
+    # 🔹 Admin Actions
     # ------------------------------------------------------
     actions = ["unlock_selected_accounts"]
 

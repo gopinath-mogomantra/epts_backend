@@ -1,9 +1,10 @@
 # ===============================================
-# reports/serializers.py (Final Production-Stable Version)
+# reports/serializers.py (Final Updated — 2025-10-26)
 # ===============================================
-# Combines data from Performance + Feedback modules
-# to generate weekly, monthly, manager-wise,
-# department-wise, and employee history reports.
+# Combines Performance + Feedback + Employee data
+# for weekly, monthly, manager-wise, department-wise,
+# and employee history reports.
+# Fully aligned with frontend and API validation.
 # ===============================================
 
 from rest_framework import serializers
@@ -13,11 +14,11 @@ from employee.models import Employee
 from .models import CachedReport
 
 
-# -------------------------------------------------
-# ✅ 1. Basic Employee Serializer
-# -------------------------------------------------
+# =====================================================
+# ✅ 1. BASIC EMPLOYEE SERIALIZER (Used Across Reports)
+# =====================================================
 class SimpleEmployeeSerializer(serializers.ModelSerializer):
-    full_name = serializers.SerializerMethodField()
+    full_name = serializers.SerializerMethodField(read_only=True)
     department_name = serializers.CharField(source="department.name", read_only=True)
     emp_id = serializers.CharField(source="user.emp_id", read_only=True)
     email = serializers.EmailField(source="user.email", read_only=True)
@@ -28,16 +29,16 @@ class SimpleEmployeeSerializer(serializers.ModelSerializer):
 
     def get_full_name(self, obj):
         user = getattr(obj, "user", None)
-        if user:
-            return f"{user.first_name or ''} {user.last_name or ''}".strip()
-        return "-"
+        if not user:
+            return "-"
+        return f"{user.first_name or ''} {user.last_name or ''}".strip()
 
 
-# -------------------------------------------------
-# ✅ 2. Weekly Report Serializer
-# -------------------------------------------------
+# =====================================================
+# ✅ 2. WEEKLY REPORT SERIALIZER
+# =====================================================
 class WeeklyReportSerializer(serializers.Serializer):
-    """Represents a consolidated weekly report entry per employee."""
+    """Represents a single week's consolidated employee performance."""
     emp_id = serializers.CharField()
     employee_full_name = serializers.CharField()
     department = serializers.CharField()
@@ -50,11 +51,11 @@ class WeeklyReportSerializer(serializers.Serializer):
     remarks = serializers.CharField(allow_blank=True, allow_null=True, required=False)
 
 
-# -------------------------------------------------
-# ✅ 3. Monthly Report Serializer
-# -------------------------------------------------
+# =====================================================
+# ✅ 3. MONTHLY REPORT SERIALIZER
+# =====================================================
 class MonthlyReportSerializer(serializers.Serializer):
-    """Aggregated monthly summary of performance and feedback."""
+    """Aggregated monthly performance and feedback summary."""
     emp_id = serializers.CharField()
     employee_full_name = serializers.CharField()
     department = serializers.CharField()
@@ -66,11 +67,11 @@ class MonthlyReportSerializer(serializers.Serializer):
     best_week_score = serializers.FloatField()
 
 
-# -------------------------------------------------
-# ✅ 4. Employee Performance History Serializer
-# -------------------------------------------------
+# =====================================================
+# ✅ 4. EMPLOYEE HISTORY SERIALIZER
+# =====================================================
 class EmployeeHistorySerializer(serializers.Serializer):
-    """Weekly trend/history for a single employee."""
+    """Weekly trend view for an employee’s performance timeline."""
     week_number = serializers.IntegerField()
     year = serializers.IntegerField()
     average_score = serializers.FloatField()
@@ -79,11 +80,11 @@ class EmployeeHistorySerializer(serializers.Serializer):
     rank = serializers.IntegerField(allow_null=True)
 
 
-# -------------------------------------------------
-# ✅ 5. Manager-Wise Report Serializer
-# -------------------------------------------------
+# =====================================================
+# ✅ 5. MANAGER-WISE REPORT SERIALIZER
+# =====================================================
 class ManagerReportSerializer(serializers.Serializer):
-    """Weekly performance report of all employees under a manager."""
+    """Weekly report for all employees under a specific manager."""
     manager_full_name = serializers.CharField()
     emp_id = serializers.CharField()
     employee_full_name = serializers.CharField()
@@ -97,11 +98,11 @@ class ManagerReportSerializer(serializers.Serializer):
     remarks = serializers.CharField(allow_blank=True, allow_null=True)
 
 
-# -------------------------------------------------
-# ✅ 6. Department-Wise Report Serializer
-# -------------------------------------------------
+# =====================================================
+# ✅ 6. DEPARTMENT-WISE REPORT SERIALIZER
+# =====================================================
 class DepartmentReportSerializer(serializers.Serializer):
-    """Weekly performance report of all employees in a department."""
+    """Weekly report across all employees in a department."""
     department_name = serializers.CharField()
     emp_id = serializers.CharField()
     employee_full_name = serializers.CharField()
@@ -115,11 +116,11 @@ class DepartmentReportSerializer(serializers.Serializer):
     remarks = serializers.CharField(allow_blank=True, allow_null=True)
 
 
-# -------------------------------------------------
-# ✅ 7. Cached Report Serializer
-# -------------------------------------------------
+# =====================================================
+# ✅ 7. CACHED REPORT SERIALIZER (DB MODEL)
+# =====================================================
 class CachedReportSerializer(serializers.ModelSerializer):
-    """Serializer for cached precomputed reports."""
+    """Handles serialization of precomputed/cached reports."""
     generated_by_full_name = serializers.SerializerMethodField(read_only=True)
     generated_by_name = serializers.CharField(source="generated_by.username", read_only=True)
     period_display = serializers.SerializerMethodField(read_only=True)
@@ -158,7 +159,7 @@ class CachedReportSerializer(serializers.ModelSerializer):
         return "-"
 
     def get_period_display(self, obj):
-        """Human-readable period label."""
+        """Readable period text for dashboards and exports."""
         if obj.report_type in ["weekly", "manager", "department"] and obj.week_number:
             return f"Week {obj.week_number}, {obj.year}"
         if obj.report_type == "monthly" and obj.month:
@@ -166,14 +167,12 @@ class CachedReportSerializer(serializers.ModelSerializer):
         return str(obj.year)
 
 
-# -------------------------------------------------
-# ✅ 8. Aggregated Report Helper Serializer
-# -------------------------------------------------
+# =====================================================
+# ✅ 8. COMBINED / AGGREGATED REPORT SERIALIZER
+# =====================================================
 class CombinedReportSerializer(serializers.Serializer):
-    """Combines performance and feedback stats into one payload."""
-    type = serializers.ChoiceField(
-        choices=["weekly", "monthly", "manager", "department"]
-    )
+    """Combines performance + feedback data into a single analytic payload."""
+    type = serializers.ChoiceField(choices=["weekly", "monthly", "manager", "department"])
     year = serializers.IntegerField()
     week_or_month = serializers.IntegerField()
     generated_by_full_name = serializers.CharField()
@@ -184,12 +183,12 @@ class CombinedReportSerializer(serializers.Serializer):
     feedback_summary = serializers.DictField(child=serializers.FloatField())
 
     def validate(self, data):
-        """Ensure correct numeric bounds for week/month."""
+        """Ensure numeric bounds for week/month."""
         report_type = data.get("type")
         period = data.get("week_or_month")
 
         if report_type in ["weekly", "manager", "department"] and not (1 <= period <= 53):
-            raise serializers.ValidationError("Invalid week number (must be between 1–53).")
+            raise serializers.ValidationError({"week_or_month": "Invalid week number (must be 1–53)."})
         if report_type == "monthly" and not (1 <= period <= 12):
-            raise serializers.ValidationError("Invalid month (must be between 1–12).")
+            raise serializers.ValidationError({"week_or_month": "Invalid month (must be 1–12)."})
         return data

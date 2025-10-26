@@ -1,3 +1,7 @@
+# ===========================================================
+# performance/serializers.py  (Frontend-Aligned & API Validation Ready)
+# ===========================================================
+
 from rest_framework import serializers
 from django.utils import timezone
 from django.contrib.auth import get_user_model
@@ -8,23 +12,15 @@ from employee.models import Department, Employee
 User = get_user_model()
 
 
-# ======================================================
-# Nested / Related Serializers
-# ======================================================
+# ===========================================================
+# ✅ NESTED / RELATED SERIALIZERS
+# ===========================================================
 class SimpleUserSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = [
-            "id",
-            "emp_id",
-            "first_name",
-            "last_name",
-            "full_name",
-            "email",
-            "role",
-        ]
+        fields = ["id", "emp_id", "first_name", "last_name", "full_name", "email", "role"]
 
     def get_full_name(self, obj):
         first = obj.first_name or ""
@@ -42,7 +38,6 @@ class SimpleEmployeeSerializer(serializers.ModelSerializer):
     user = SimpleUserSerializer(read_only=True)
     role = serializers.SerializerMethodField()
     manager_name = serializers.SerializerMethodField()
-    manager_full_name = serializers.SerializerMethodField()
     department_name = serializers.CharField(source="department.name", read_only=True)
     full_name = serializers.SerializerMethodField(read_only=True)
 
@@ -57,35 +52,27 @@ class SimpleEmployeeSerializer(serializers.ModelSerializer):
             "department_name",
             "full_name",
             "manager_name",
-            "manager_full_name",
         ]
 
     def get_role(self, obj):
         return getattr(obj.user, "role", None)
 
     def get_full_name(self, obj):
-        """Return employee full name from user."""
-        first = obj.user.first_name or ""
-        last = obj.user.last_name or ""
-        return f"{first} {last}".strip()
+        """Return employee full name."""
+        u = obj.user
+        return f"{u.first_name} {u.last_name}".strip()
 
     def get_manager_name(self, obj):
-        """Short manager name (first only)."""
-        if obj.manager and obj.manager.user:
-            return obj.manager.user.first_name
-        return None
-
-    def get_manager_full_name(self, obj):
-        """Full manager name (first + last)."""
+        """Return manager’s full name if assigned."""
         if obj.manager and obj.manager.user:
             m = obj.manager.user
             return f"{m.first_name} {m.last_name}".strip()
-        return None
+        return "-"
 
 
-# ======================================================
-# GET Serializer (Read-Only)
-# ======================================================
+# ===========================================================
+# ✅ READ-ONLY SERIALIZER (List, Retrieve)
+# ===========================================================
 class PerformanceEvaluationSerializer(serializers.ModelSerializer):
     employee = SimpleEmployeeSerializer(read_only=True)
     evaluator = SimpleUserSerializer(read_only=True)
@@ -118,6 +105,7 @@ class PerformanceEvaluationSerializer(serializers.ModelSerializer):
         ]
 
     def get_evaluation_summary(self, obj):
+        """Return all metrics as key-value list for frontend charts."""
         metrics = [
             ("Communication Skills", obj.communication_skills),
             ("Multitasking", obj.multitasking),
@@ -144,13 +132,13 @@ class PerformanceEvaluationSerializer(serializers.ModelSerializer):
         return f"Week {obj.week_number}, {obj.year}"
 
 
-# ======================================================
-# CREATE / UPDATE Serializer (with emp_id + dept_code)
-# ======================================================
+# ===========================================================
+# ✅ CREATE / UPDATE SERIALIZER (emp_id + dept_code)
+# ===========================================================
 class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
     employee_emp_id = serializers.CharField(write_only=True)
-    evaluator_emp_id = serializers.CharField(write_only=True, required=False, allow_null=True)
-    department_code = serializers.CharField(write_only=True, required=False, allow_null=True)
+    evaluator_emp_id = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
+    department_code = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
 
     class Meta:
         model = PerformanceEvaluation
@@ -180,11 +168,10 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
             "remarks",
         ]
 
-    # --------------------------------------------------
+    # --------------------------------------------------------
     # Validate Employee
-    # --------------------------------------------------
+    # --------------------------------------------------------
     def validate_employee_emp_id(self, value):
-        from employee.models import Employee
         try:
             emp = Employee.objects.select_related("user", "department").get(user__emp_id__iexact=value)
         except Employee.DoesNotExist:
@@ -192,14 +179,12 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
         self.context["employee"] = emp
         return value
 
-    # --------------------------------------------------
+    # --------------------------------------------------------
     # Validate Evaluator
-    # --------------------------------------------------
+    # --------------------------------------------------------
     def validate_evaluator_emp_id(self, value):
         if not value:
             return None
-        from django.contrib.auth import get_user_model
-        User = get_user_model()
         try:
             evaluator = User.objects.get(emp_id__iexact=value)
         except User.DoesNotExist:
@@ -207,13 +192,12 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
         self.context["evaluator"] = evaluator
         return value
 
-    # --------------------------------------------------
+    # --------------------------------------------------------
     # Validate Department
-    # --------------------------------------------------
+    # --------------------------------------------------------
     def validate_department_code(self, value):
         if not value:
             return None
-        from employee.models import Department
         try:
             dept = Department.objects.get(code__iexact=value, is_active=True)
         except Department.DoesNotExist:
@@ -221,47 +205,44 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
         self.context["department"] = dept
         return value
 
-    # --------------------------------------------------
+    # --------------------------------------------------------
     # Global Validation
-    # --------------------------------------------------
+    # --------------------------------------------------------
     def validate(self, attrs):
-        employee = self.context.get("employee")
+        emp = self.context.get("employee")
         review_date = attrs.get("review_date", timezone.now().date())
         evaluation_type = attrs.get("evaluation_type", "Manager")
 
-        # Prevent duplicate evaluations for same week + evaluator
+        # Prevent duplicate weekly evaluations
         week_number = review_date.isocalendar()[1]
         year = review_date.year
         existing = PerformanceEvaluation.objects.filter(
-            employee=employee, week_number=week_number, year=year, evaluation_type=evaluation_type
+            employee=emp, week_number=week_number, year=year, evaluation_type=evaluation_type
         )
         if self.instance:
             existing = existing.exclude(pk=self.instance.pk)
         if existing.exists():
             raise serializers.ValidationError(
-                f"Performance evaluation already exists for {employee.user.emp_id} in Week {week_number}, {year} ({evaluation_type})."
+                f"Evaluation already exists for {emp.user.emp_id} (Week {week_number}, {year}, {evaluation_type})."
             )
 
-        # Only Admin or Manager can create evaluations
+        # Role restriction
         request = self.context.get("request")
         if request and hasattr(request.user, "role"):
-            role = request.user.role.lower()
-            if role not in ["admin", "manager"]:
-                raise serializers.ValidationError({"evaluator": "Only Admin or Manager can create evaluations."})
+            if request.user.role not in ["Admin", "Manager"]:
+                raise serializers.ValidationError({"role": "Only Admin or Manager can submit evaluations."})
         return attrs
 
-    # --------------------------------------------------
+    # --------------------------------------------------------
     # CREATE
-    # --------------------------------------------------
+    # --------------------------------------------------------
     def create(self, validated_data):
         emp = self.context.get("employee")
         evaluator = self.context.get("evaluator", None)
         department = self.context.get("department", emp.department if emp else None)
 
-        # Remove extra fields before saving
-        validated_data.pop("employee_emp_id", None)
-        validated_data.pop("evaluator_emp_id", None)
-        validated_data.pop("department_code", None)
+        for f in ["employee_emp_id", "evaluator_emp_id", "department_code"]:
+            validated_data.pop(f, None)
 
         evaluation = PerformanceEvaluation.objects.create(
             employee=emp,
@@ -271,9 +252,9 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
         )
         return evaluation
 
-    # --------------------------------------------------
+    # --------------------------------------------------------
     # UPDATE
-    # --------------------------------------------------
+    # --------------------------------------------------------
     def update(self, instance, validated_data):
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
@@ -281,15 +262,13 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
         return instance
 
 
-# ======================================================
-# DASHBOARD / SUMMARY Serializer
-# ======================================================
+# ===========================================================
+# ✅ DASHBOARD / SUMMARY SERIALIZER
+# ===========================================================
 class PerformanceDashboardSerializer(serializers.ModelSerializer):
     emp_id = serializers.SerializerMethodField()
-    employee_name = serializers.SerializerMethodField()
     employee_full_name = serializers.SerializerMethodField()
     manager_name = serializers.SerializerMethodField()
-    manager_full_name = serializers.SerializerMethodField()
     department_name = serializers.CharField(source="department.name", read_only=True)
     score_display = serializers.SerializerMethodField()
 
@@ -298,10 +277,8 @@ class PerformanceDashboardSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "emp_id",
-            "employee_name",
             "employee_full_name",
             "manager_name",
-            "manager_full_name",
             "department_name",
             "review_date",
             "evaluation_period",
@@ -316,23 +293,11 @@ class PerformanceDashboardSerializer(serializers.ModelSerializer):
     def get_emp_id(self, obj):
         return getattr(obj.employee.user, "emp_id", None)
 
-    def get_employee_name(self, obj):
-        """Short employee name (first name only)."""
-        return obj.employee.user.first_name
-
     def get_employee_full_name(self, obj):
-        """Full employee name (first + last)."""
         u = obj.employee.user
         return f"{u.first_name} {u.last_name}".strip()
 
     def get_manager_name(self, obj):
-        """Short manager name (first name only)."""
-        if obj.employee.manager and obj.employee.manager.user:
-            return obj.employee.manager.user.first_name
-        return "-"
-
-    def get_manager_full_name(self, obj):
-        """Full manager name (first + last)."""
         if obj.employee.manager and obj.employee.manager.user:
             m = obj.employee.manager.user
             return f"{m.first_name} {m.last_name}".strip()

@@ -1,6 +1,6 @@
-# ===============================================
-# users/views.py  (Frontend-Aligned & Demo Ready — 2025-10-24)
-# ===============================================
+# ===========================================================
+# users/views.py  (API Validation & Frontend Integration Ready)
+# ===========================================================
 
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
@@ -21,31 +21,34 @@ from .serializers import (
 User = get_user_model()
 
 
-# =====================================================
-# ✅ 1. LOGIN API (JWT Token Obtain View)
-# =====================================================
+# ===========================================================
+# ✅ 1. LOGIN (JWT Authentication)
+# ===========================================================
 class ObtainTokenPairView(TokenObtainPairView):
-    """Authenticate user and issue JWT tokens."""
+    """
+    Authenticate user via emp_id or username.
+    Returns access & refresh tokens + user info.
+    """
     permission_classes = [AllowAny]
     serializer_class = CustomTokenObtainPairSerializer
 
 
-# =====================================================
-# ✅ 2. REFRESH TOKEN API
-# =====================================================
+# ===========================================================
+# ✅ 2. REFRESH TOKEN
+# ===========================================================
 class RefreshTokenView(TokenRefreshView):
-    """Refresh JWT token using valid refresh token."""
+    """Refresh access token using refresh token."""
     permission_classes = [AllowAny]
 
 
-# =====================================================
-# ✅ 3. USER REGISTRATION (Admin / Superuser Only)
-# =====================================================
+# ===========================================================
+# ✅ 3. REGISTER USER (Admin Only)
+# ===========================================================
 class RegisterView(generics.CreateAPIView):
     """
-    Allows Admins or Superusers to register a new user.
-    - emp_id is auto-generated
-    - joining_date auto-filled if missing
+    Allows Admins/Superusers to register new users.
+    - emp_id auto-generated
+    - password optional (auto-created if not provided)
     """
     queryset = User.objects.all()
     serializer_class = RegisterSerializer
@@ -63,28 +66,27 @@ class RegisterView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         new_user = serializer.save()
 
-        # Auto-fill joining date if not provided
         if not getattr(new_user, "joining_date", None):
             new_user.joining_date = timezone.now().date()
             new_user.save(update_fields=["joining_date"])
 
         return Response(
             {
-                "message": "✅ User registered successfully.",
+                "message": "✅ User registered successfully!",
                 "user": ProfileSerializer(new_user).data,
             },
             status=status.HTTP_201_CREATED,
         )
 
 
-# =====================================================
-# ✅ 4. CHANGE / FIRST-TIME PASSWORD (Combined)
-# =====================================================
+# ===========================================================
+# ✅ 4. CHANGE PASSWORD (Normal or First-Time)
+# ===========================================================
 class ChangePasswordView(APIView):
     """
     Handles both:
-    1️⃣ First-time password change (temp password)
-    2️⃣ Authenticated password change (with JWT)
+    - First-time login (username + old_password)
+    - Authenticated user (JWT + old_password)
     """
     permission_classes = [AllowAny]
 
@@ -94,7 +96,6 @@ class ChangePasswordView(APIView):
         new_password = request.data.get("new_password")
         confirm_password = request.data.get("confirm_password")
 
-        # Validate new passwords
         if not new_password or not confirm_password:
             return Response(
                 {"detail": "New password and confirm password are required."},
@@ -106,29 +107,35 @@ class ChangePasswordView(APIView):
 
         user = None
 
-        # Case 1️⃣: First-time login (username + old password)
+        # Case 1: First-time password change (username + old password)
         if username and old_password:
             user = authenticate(username=username, password=old_password)
             if not user:
-                return Response({"detail": "Invalid username or old password."}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {"detail": "Invalid username or old password."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
         else:
-            # Case 2️⃣: Authenticated user via JWT
+            # Case 2: Authenticated via JWT
             if request.user and request.user.is_authenticated:
                 user = request.user
                 if not old_password:
                     return Response(
-                        {"detail": "Old password is required for authenticated password change."},
+                        {"detail": "Old password is required."},
                         status=status.HTTP_400_BAD_REQUEST,
                     )
                 if not user.check_password(old_password):
-                    return Response({"detail": "Old password is incorrect."}, status=status.HTTP_400_BAD_REQUEST)
+                    return Response(
+                        {"detail": "Old password is incorrect."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
             else:
                 return Response(
                     {"detail": "Authentication credentials were not provided."},
                     status=status.HTTP_401_UNAUTHORIZED,
                 )
 
-        # Update password and clear flag
+        # Update password and remove forced change
         user.set_password(new_password)
         user.force_password_change = False
         user.save(update_fields=["password", "force_password_change"])
@@ -136,11 +143,11 @@ class ChangePasswordView(APIView):
         return Response({"message": "✅ Password changed successfully!"}, status=status.HTTP_200_OK)
 
 
-# =====================================================
-# ✅ 5. PROFILE API (Self)
-# =====================================================
+# ===========================================================
+# ✅ 5. PROFILE API (Authenticated User)
+# ===========================================================
 class ProfileView(APIView):
-    """Return current user's profile info."""
+    """Fetch currently logged-in user profile."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -148,11 +155,11 @@ class ProfileView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-# =====================================================
-# ✅ 6. ROLE LIST
-# =====================================================
+# ===========================================================
+# ✅ 6. ROLE LIST (Dropdown Helper)
+# ===========================================================
 class RoleListView(APIView):
-    """Return available user roles."""
+    """Return list of available roles for dropdown."""
     permission_classes = [AllowAny]
 
     def get(self, request):
@@ -160,11 +167,11 @@ class RoleListView(APIView):
         return Response({"roles": roles}, status=status.HTTP_200_OK)
 
 
-# =====================================================
-# ✅ 7. USER LIST (Admin Only)
-# =====================================================
+# ===========================================================
+# ✅ 7. USER LIST (Admin View)
+# ===========================================================
 class UserListView(generics.ListAPIView):
-    """List all users (Admins only)."""
+    """Lists all users — visible to Admins only."""
     queryset = User.objects.all().order_by("emp_id")
     serializer_class = ProfileSerializer
     permission_classes = [IsAuthenticated]
@@ -176,12 +183,12 @@ class UserListView(generics.ListAPIView):
         """Filter users by status or department."""
         qs = super().get_queryset()
         status_param = self.request.query_params.get("status")
-        department_param = self.request.query_params.get("department")
+        dept_param = self.request.query_params.get("department")
 
         if status_param:
             qs = qs.filter(status__iexact=status_param)
-        if department_param:
-            qs = qs.filter(department__name__icontains=department_param)
+        if dept_param:
+            qs = qs.filter(department__name__icontains=dept_param)
         return qs
 
     def list(self, request, *args, **kwargs):
@@ -194,15 +201,15 @@ class UserListView(generics.ListAPIView):
         return super().list(request, *args, **kwargs)
 
 
-# =====================================================
+# ===========================================================
 # ✅ 8. ADMIN RESET PASSWORD
-# =====================================================
+# ===========================================================
 @api_view(["POST"])
 @permission_classes([IsAdminUser])
 def reset_password(request):
     """
-    Admins can reset any user's password.
-    Generates a new temporary password and sets force_password_change=True.
+    Admins can reset another user's password.
+    Generates a new temporary password and flags for reset on next login.
     """
     emp_id = request.data.get("emp_id")
     if not emp_id:
@@ -214,8 +221,8 @@ def reset_password(request):
         return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
 
     new_password = get_random_string(
-        length=12,
-        allowed_chars="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+"
+        length=10,
+        allowed_chars="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
     )
 
     user.set_password(new_password)

@@ -1,8 +1,8 @@
 # ===========================================================
-# users/urls.py (Frontend-Aligned & Demo Ready — 2025-10-24)
+# users/urls.py (Final Updated — Frontend & API Aligned)
 # ===========================================================
 # Routes for:
-# - Authentication (Login, Refresh)
+# - Authentication (JWT Login, Refresh)
 # - User Registration & Profile
 # - Password Management (Change & Reset)
 # - Role Listing & User Directory

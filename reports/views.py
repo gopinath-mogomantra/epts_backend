@@ -1,5 +1,5 @@
 # ===============================================
-# reports/views.py (Final Production-Stable Version)
+# reports/views.py (Final Updated — Frontend & API Validation Ready)
 # ===============================================
 # Handles:
 # - Weekly Consolidated Report
@@ -18,8 +18,8 @@ from django.db.models.functions import Rank
 from django.utils import timezone
 from django.http import HttpResponse
 from datetime import timedelta, datetime
-import csv
 from itertools import chain
+import csv
 
 from employee.models import Employee
 from performance.models import PerformanceEvaluation
@@ -37,7 +37,7 @@ from .serializers import (
 # 🧠 Helper: Compute Feedback Average
 # ===========================================================
 def get_feedback_average(employee, start_date=None, end_date=None):
-    """Compute average rating from all feedback sources for a given employee."""
+    """Compute average rating across all feedback sources for a given employee."""
     filters = Q(employee=employee)
     if start_date and end_date:
         filters &= Q(created_at__range=(start_date, end_date))
@@ -58,7 +58,7 @@ class WeeklyReportView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        """Returns weekly performance summary for all employees."""
+        """Return consolidated weekly performance summary."""
         try:
             week = int(request.query_params.get("week", timezone.now().isocalendar()[1]))
             year = int(request.query_params.get("year", timezone.now().year))
@@ -69,7 +69,6 @@ class WeeklyReportView(APIView):
                 .select_related("employee__user", "department")
                 .annotate(
                     emp_id=F("employee__user__emp_id"),
-                    employee_name=F("employee__user__first_name"),
                     department_name=F("department__name"),
                 )
             )
@@ -93,18 +92,18 @@ class WeeklyReportView(APIView):
 
             result = [
                 {
-                    "emp_id": obj.employee.user.emp_id,
-                    "employee_full_name": f"{obj.employee.user.first_name} {obj.employee.user.last_name}".strip(),
-                    "department": obj.department.name if obj.department else "-",
-                    "total_score": obj.total_score,
-                    "average_score": obj.average_score,
-                    "feedback_avg": feedback_map.get(obj.employee.id, 0.0),
+                    "emp_id": p.employee.user.emp_id,
+                    "employee_full_name": f"{p.employee.user.first_name} {p.employee.user.last_name}".strip(),
+                    "department": p.department.name if p.department else "-",
+                    "total_score": p.total_score,
+                    "average_score": p.average_score,
+                    "feedback_avg": feedback_map.get(p.employee.id, 0.0),
                     "week_number": week,
                     "year": year,
-                    "rank": obj.computed_rank,
-                    "remarks": obj.remarks or "",
+                    "rank": p.computed_rank,
+                    "remarks": p.remarks or "",
                 }
-                for obj in ranked
+                for p in ranked
             ]
 
             if save_cache:
@@ -116,7 +115,10 @@ class WeeklyReportView(APIView):
                     generated_by=request.user,
                 )
 
-            return Response(WeeklyReportSerializer(result, many=True).data, status=status.HTTP_200_OK)
+            return Response(
+                {"evaluation_period": f"Week {week}, {year}", "records": WeeklyReportSerializer(result, many=True).data},
+                status=status.HTTP_200_OK,
+            )
 
         except Exception as e:
             print("❌ WeeklyReport Error:", str(e))
@@ -130,7 +132,7 @@ class MonthlyReportView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        """Returns monthly average performance summary."""
+        """Return monthly average performance summary."""
         try:
             month = int(request.query_params.get("month", timezone.now().month))
             year = int(request.query_params.get("year", timezone.now().year))
@@ -147,13 +149,15 @@ class MonthlyReportView(APIView):
                 )
 
             data = []
-            for emp in Employee.objects.select_related("user", "department"):
+            employees = Employee.objects.filter(id__in=perf_qs.values_list("employee_id", flat=True))
+            for emp in employees.select_related("user", "department"):
                 emp_perfs = perf_qs.filter(employee=emp)
                 if not emp_perfs.exists():
                     continue
 
                 avg_score = round(emp_perfs.aggregate(avg=Avg("average_score"))["avg"], 2)
                 best_week_obj = emp_perfs.order_by("-average_score").first()
+
                 fb_avg = get_feedback_average(
                     emp,
                     start_date=best_week_obj.created_at - timedelta(days=30),
@@ -181,7 +185,10 @@ class MonthlyReportView(APIView):
                     generated_by=request.user,
                 )
 
-            return Response(MonthlyReportSerializer(data, many=True).data, status=status.HTTP_200_OK)
+            return Response(
+                {"evaluation_period": f"Month {month}, {year}", "records": MonthlyReportSerializer(data, many=True).data},
+                status=status.HTTP_200_OK,
+            )
 
         except Exception as e:
             print("❌ MonthlyReport Error:", str(e))
@@ -189,13 +196,13 @@ class MonthlyReportView(APIView):
 
 
 # ===========================================================
-# ✅ 3. MANAGER-WISE WEEKLY REPORT
+# ✅ 3. MANAGER-WISE REPORT
 # ===========================================================
 class ManagerReportView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        """Returns weekly performance report for employees under a manager."""
+        """Return weekly performance report for employees under a manager."""
         manager_name = request.query_params.get("manager_name")
         week = int(request.query_params.get("week", timezone.now().isocalendar()[1]))
         year = int(request.query_params.get("year", timezone.now().year))
@@ -214,76 +221,80 @@ class ManagerReportView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        data = []
-        for obj in perf_qs:
-            emp = obj.employee
-            fb_avg = get_feedback_average(emp)
-            data.append({
+        data = [
+            {
                 "manager_full_name": manager_name,
-                "emp_id": emp.user.emp_id,
-                "employee_full_name": f"{emp.user.first_name} {emp.user.last_name}",
-                "department": emp.department.name if emp.department else "-",
-                "total_score": obj.total_score,
-                "average_score": obj.average_score,
-                "feedback_avg": fb_avg,
+                "emp_id": p.employee.user.emp_id,
+                "employee_full_name": f"{p.employee.user.first_name} {p.employee.user.last_name}".strip(),
+                "department": p.department.name if p.department else "-",
+                "total_score": p.total_score,
+                "average_score": p.average_score,
+                "feedback_avg": get_feedback_average(p.employee),
                 "week_number": week,
                 "year": year,
-                "rank": obj.rank,
-                "remarks": obj.remarks,
-            })
+                "rank": p.rank,
+                "remarks": p.remarks,
+            }
+            for p in perf_qs
+        ]
 
-        return Response(ManagerReportSerializer(data, many=True).data, status=status.HTTP_200_OK)
+        return Response(
+            {"evaluation_period": f"Week {week}, {year}", "records": ManagerReportSerializer(data, many=True).data},
+            status=status.HTTP_200_OK,
+        )
 
 
 # ===========================================================
-# ✅ 4. DEPARTMENT-WISE WEEKLY REPORT
+# ✅ 4. DEPARTMENT-WISE REPORT
 # ===========================================================
 class DepartmentReportView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        """Returns weekly performance report for a department."""
-        department_name = request.query_params.get("department_name")
+        """Return weekly performance report for a department."""
+        dept_name = request.query_params.get("department_name")
         week = int(request.query_params.get("week", timezone.now().isocalendar()[1]))
         year = int(request.query_params.get("year", timezone.now().year))
 
-        if not department_name:
+        if not dept_name:
             return Response({"error": "Please provide department_name."}, status=status.HTTP_400_BAD_REQUEST)
 
-        employees = Employee.objects.filter(department__name__iexact=department_name)
+        employees = Employee.objects.filter(department__name__iexact=dept_name)
         perf_qs = PerformanceEvaluation.objects.filter(
             employee__in=employees, week_number=week, year=year
         ).select_related("employee__user", "department", "manager__user")
 
         if not perf_qs.exists():
             return Response(
-                {"message": f"No data found for department {department_name} in Week {week}, {year}."},
+                {"message": f"No data found for department {dept_name} in Week {week}, {year}."},
                 status=status.HTTP_200_OK,
             )
 
         data = []
-        for obj in perf_qs:
-            emp = obj.employee
-            fb_avg = get_feedback_average(emp)
+        for p in perf_qs:
+            emp = p.employee
             manager_full = (
                 f"{emp.manager.user.first_name} {emp.manager.user.last_name}".strip()
                 if emp.manager else "-"
             )
             data.append({
-                "department_name": department_name,
+                "department_name": dept_name,
                 "emp_id": emp.user.emp_id,
-                "employee_full_name": f"{emp.user.first_name} {emp.user.last_name}",
+                "employee_full_name": f"{emp.user.first_name} {emp.user.last_name}".strip(),
                 "manager_full_name": manager_full,
-                "total_score": obj.total_score,
-                "average_score": obj.average_score,
-                "feedback_avg": fb_avg,
+                "total_score": p.total_score,
+                "average_score": p.average_score,
+                "feedback_avg": get_feedback_average(emp),
                 "week_number": week,
                 "year": year,
-                "rank": obj.rank,
-                "remarks": obj.remarks,
+                "rank": p.rank,
+                "remarks": p.remarks,
             })
 
-        return Response(DepartmentReportSerializer(data, many=True).data, status=status.HTTP_200_OK)
+        return Response(
+            {"evaluation_period": f"Week {week}, {year}", "records": DepartmentReportSerializer(data, many=True).data},
+            status=status.HTTP_200_OK,
+        )
 
 
 # ===========================================================
@@ -293,7 +304,7 @@ class EmployeeHistoryView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, emp_id):
-        """Returns historical weekly trend for an employee."""
+        """Return weekly trend history for a specific employee."""
         try:
             employee = Employee.objects.select_related("user").get(user__emp_id=emp_id)
         except Employee.DoesNotExist:
@@ -303,19 +314,22 @@ class EmployeeHistoryView(APIView):
         if not perf_qs.exists():
             return Response({"message": "No performance history found."}, status=status.HTTP_200_OK)
 
-        result = []
-        for p in perf_qs:
-            fb_avg = get_feedback_average(employee, start_date=p.created_at - timedelta(days=7), end_date=p.created_at)
-            result.append({
+        result = [
+            {
                 "week_number": p.week_number,
                 "year": p.year,
                 "average_score": p.average_score,
-                "feedback_avg": fb_avg,
+                "feedback_avg": get_feedback_average(employee, start_date=p.created_at - timedelta(days=7), end_date=p.created_at),
                 "remarks": p.remarks,
                 "rank": p.rank,
-            })
+            }
+            for p in perf_qs
+        ]
 
-        return Response(EmployeeHistorySerializer(result, many=True).data, status=status.HTTP_200_OK)
+        return Response(
+            {"employee": employee.user.emp_id, "records": EmployeeHistorySerializer(result, many=True).data},
+            status=status.HTTP_200_OK,
+        )
 
 
 # ===========================================================
@@ -325,7 +339,7 @@ class ExportWeeklyCSVView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        """Exports weekly report as a downloadable CSV."""
+        """Export weekly report as a downloadable CSV file."""
         week = int(request.query_params.get("week", timezone.now().isocalendar()[1]))
         year = int(request.query_params.get("year", timezone.now().year))
 
