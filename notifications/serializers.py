@@ -1,7 +1,3 @@
-# ===============================================
-# notifications/serializers.py (Final Updated Version)
-# ===============================================
-
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from .models import Notification
@@ -10,29 +6,36 @@ from employee.serializers import UserSummarySerializer
 User = get_user_model()
 
 
-# ===============================================================
-# Notification Serializer (Unified for Both Auto & Persistent)
-# ===============================================================
+# ===========================================================
+# ✅ Notification Serializer (Detailed View)
+# ===========================================================
 class NotificationSerializer(serializers.ModelSerializer):
     """
-    Serializer for Notification model.
-    Supports:
-      - Auto-deleting notifications after read
-      - Persistent notifications (marked as read)
-    Displays employee summary and human-readable timestamps.
+    Main serializer for Notification model.
+
+    Features:
+    - Handles both auto-delete and persistent notifications.
+    - Includes employee and department summary.
+    - Adds readable timestamps and display text for UI.
     """
 
+    # 🔹 Nested user summary for frontend dashboards
     employee = UserSummarySerializer(read_only=True)
+
+    # 🔹 Derived fields
     department_name = serializers.CharField(
         source="department.name", read_only=True, default=None
     )
+    status_display = serializers.SerializerMethodField()
+    meta_display = serializers.SerializerMethodField()
+
+    # 🔹 Timestamp formatting (ISO + readable)
     created_at = serializers.DateTimeField(
         format="%Y-%m-%d %H:%M:%S", read_only=True
     )
     read_at = serializers.DateTimeField(
         format="%Y-%m-%d %H:%M:%S", read_only=True, required=False
     )
-    status_display = serializers.SerializerMethodField()
 
     class Meta:
         model = Notification
@@ -43,6 +46,7 @@ class NotificationSerializer(serializers.ModelSerializer):
             "message",
             "is_read",
             "status_display",
+            "meta_display",
             "created_at",
             "read_at",
             "auto_delete",
@@ -55,25 +59,41 @@ class NotificationSerializer(serializers.ModelSerializer):
             "is_read",
             "department_name",
             "status_display",
+            "meta_display",
         ]
 
-    # -----------------------------------------------------------
-    # Custom Field Logic
-    # -----------------------------------------------------------
+    # -------------------------------------------------------
+    # ✅ Custom Computed Fields
+    # -------------------------------------------------------
     def get_status_display(self, obj):
-        """Return a readable notification status."""
+        """Return human-readable status text."""
         if obj.is_read:
-            if obj.auto_delete:
-                return "Read & Auto-Deleted"
-            return "Read"
+            return "Read & Auto-Deleted" if obj.auto_delete else "Read"
         return "Unread"
 
+    def get_meta_display(self, obj):
+        """
+        Return a concise summary line for UI cards (e.g. notifications bell).
+        Example: "📢 New feedback received (27 Oct 2025, 10:32)"
+        """
+        icon = "📢" if not obj.is_read else "✅"
+        ts = obj.created_at.strftime("%d %b %Y, %H:%M")
+        return f"{icon} {obj.message} ({ts})"
+
+    # -------------------------------------------------------
+    # ✅ Safe Create Logic (System & Authenticated User)
+    # -------------------------------------------------------
     def create(self, validated_data):
         """
-        Automatically assigns employee if not explicitly set.
-        Typically used for system-generated notifications.
+        Auto-assigns employee (if not provided) and infers department.
+        Used by system-triggered or authenticated notifications.
         """
         request = self.context.get("request")
-        if request and request.user.is_authenticated and not validated_data.get("employee"):
-            validated_data["employee"] = request.user
+        if request and request.user.is_authenticated:
+            validated_data.setdefault("employee", request.user)
+
+            # Auto-assign department from employee profile if available
+            if not validated_data.get("department") and hasattr(request.user, "employee_profile"):
+                validated_data["department"] = getattr(request.user.employee_profile, "department", None)
+
         return super().create(validated_data)

@@ -1,20 +1,23 @@
-# ===============================================
-# notifications/models.py  (Final Updated Version)
-# ===============================================
-
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class Notification(models.Model):
     """
     Stores system-generated notifications for employees.
-    Notifications can be:
-    - Temporary (auto-deleted after reading)
-    - Persistent (kept and marked as read)
+    Supports:
+    - Auto-deletion after reading (temporary)
+    - Persistent notifications (marked as read)
+    - Optional department-wide targeting (for broadcast use)
     """
 
+    # =======================================================
+    # 🔹 Core Fields
+    # =======================================================
     employee = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
@@ -29,18 +32,18 @@ class Notification(models.Model):
 
     is_read = models.BooleanField(
         default=False,
-        help_text="Indicates if the notification has been read.",
+        help_text="Indicates whether the notification has been read.",
     )
 
     read_at = models.DateTimeField(
         null=True,
         blank=True,
-        help_text="Timestamp when the notification was read.",
+        help_text="Timestamp when the notification was marked as read.",
     )
 
     created_at = models.DateTimeField(
         auto_now_add=True,
-        help_text="Timestamp when this notification was created.",
+        help_text="Timestamp when the notification was created.",
     )
 
     auto_delete = models.BooleanField(
@@ -49,7 +52,9 @@ class Notification(models.Model):
                   "If False → keep record marked as read.",
     )
 
-    # Optional: allow department-level notifications in future
+    # =======================================================
+    # 🔹 Optional: Departmental Notifications (Future Feature)
+    # =======================================================
     department = models.ForeignKey(
         "employee.Department",
         on_delete=models.SET_NULL,
@@ -59,6 +64,9 @@ class Notification(models.Model):
         help_text="Optional: department-wide notification scope.",
     )
 
+    # =======================================================
+    # 🔹 Meta Configuration
+    # =======================================================
     class Meta:
         ordering = ["-created_at"]
         verbose_name = "Notification"
@@ -68,30 +76,56 @@ class Notification(models.Model):
             models.Index(fields=["created_at"]),
         ]
 
-    # ------------------------------------------------------
-    # Instance Methods
-    # ------------------------------------------------------
+    # =======================================================
+    # 🔹 Core Methods
+    # =======================================================
     def mark_as_read(self, auto_commit=True):
         """
-        Marks the notification as read.
-        Deletes it immediately if `auto_delete=True`.
+        Marks this notification as read.
+        If auto_delete=True, deletes it immediately after marking as read.
         """
+        if self.is_read:
+            logger.debug(f"🔁 Notification already read: {self}")
+            return
+
         self.is_read = True
         self.read_at = timezone.now()
+
         if auto_commit:
             self.save(update_fields=["is_read", "read_at"])
+            logger.info(f"📬 Notification marked as read for {self.employee} at {self.read_at}")
 
-        # Auto-delete if flagged
+        # Auto-delete if configured
         if self.auto_delete:
+            logger.info(f"🗑️ Auto-deleting read notification for {self.employee}: {self.message[:50]}")
             self.delete()
 
-    def mark_as_unread(self):
-        """Reverts a notification back to unread state."""
+    def mark_as_unread(self, auto_commit=True):
+        """
+        Reverts a notification back to unread state.
+        Useful for testing, admin corrections, or UX reset.
+        """
+        if not self.is_read:
+            logger.debug(f"🔁 Notification already unread: {self}")
+            return
+
         self.is_read = False
         self.read_at = None
-        self.save(update_fields=["is_read", "read_at"])
+
+        if auto_commit:
+            self.save(update_fields=["is_read", "read_at"])
+            logger.info(f"🔄 Notification reverted to unread for {self.employee}")
+
+    def soft_delete(self):
+        """
+        Soft delete hook — sets auto_delete flag for future auto-cleanup.
+        (Useful for scheduled cleanup jobs)
+        """
+        self.auto_delete = True
+        self.save(update_fields=["auto_delete"])
+        logger.info(f"⚙️ Notification flagged for auto-delete: {self}")
 
     def __str__(self):
-        """Readable admin display."""
+        """Readable name for admin and shell."""
         status = "✅ Read" if self.is_read else "🕐 Unread"
-        return f"[{status}] {self.employee} - {self.message[:60]}"
+        return f"[{status}] {self.employee} — {self.message[:60]}"

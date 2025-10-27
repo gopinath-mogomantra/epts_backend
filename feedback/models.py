@@ -1,7 +1,3 @@
-# ===============================================
-# feedback/models.py (Final Synced Version)
-# ===============================================
-
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
@@ -10,9 +6,16 @@ from django.core.exceptions import ValidationError
 User = settings.AUTH_USER_MODEL
 
 
-# ============================================================
+# ===========================================================
+# ✅ Constants
+# ===========================================================
+RATING_MIN = 1
+RATING_MAX = 10
+
+
+# ===========================================================
 # ✅ Abstract Base Class for Feedback
-# ============================================================
+# ===========================================================
 class BaseFeedback(models.Model):
     """
     Abstract base model for all feedback types.
@@ -37,11 +40,7 @@ class BaseFeedback(models.Model):
 
     feedback_text = models.TextField(help_text="Detailed feedback or comments from the reviewer.")
     remarks = models.TextField(blank=True, null=True, help_text="Additional notes or suggestions.")
-
-    rating = models.PositiveSmallIntegerField(
-        default=0,
-        help_text="Numeric rating (1–10 scale).",
-    )
+    rating = models.PositiveSmallIntegerField(default=0, help_text=f"Numeric rating ({RATING_MIN}–{RATING_MAX} scale).")
 
     created_by = models.ForeignKey(
         User,
@@ -56,7 +55,7 @@ class BaseFeedback(models.Model):
         max_length=20,
         choices=[("Private", "Private"), ("Public", "Public")],
         default="Private",
-        help_text="Defines whether the feedback is public or private in dashboards/reports.",
+        help_text="Defines whether feedback is visible in dashboards/reports.",
     )
 
     feedback_date = models.DateField(default=timezone.localdate)
@@ -64,12 +63,24 @@ class BaseFeedback(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     # --------------------------------------------------------
-    # Meta & Display
+    # 🧩 Optional Analytics Field
     # --------------------------------------------------------
+    source_type = models.CharField(
+        max_length=20,
+        blank=True,
+        null=True,
+        editable=False,
+        help_text="Auto-filled field (Admin / Manager / Client) for analytics grouping.",
+    )
+
     class Meta:
         abstract = True
         ordering = ["-created_at"]
+        index_together = [("employee", "department", "feedback_date")]
 
+    # --------------------------------------------------------
+    # ✅ Display & Utility
+    # --------------------------------------------------------
     def __str__(self):
         emp_name = (
             f"{self.employee.user.first_name} {self.employee.user.last_name}".strip()
@@ -78,50 +89,66 @@ class BaseFeedback(models.Model):
         )
         return f"{self.__class__.__name__} → {emp_name} (Rating: {self.rating}/10)"
 
+    def get_feedback_summary(self):
+        """Return short summary for API or dashboards."""
+        return {
+            "employee": getattr(self.employee.user, "emp_id", None),
+            "rating": self.rating,
+            "visibility": self.visibility,
+            "feedback_date": self.feedback_date,
+            "department": getattr(self.department, "name", "-"),
+            "created_by": getattr(self.created_by, "username", "-"),
+        }
+
     # --------------------------------------------------------
-    # Validation & Save Logic
+    # ✅ Validation & Save Logic
     # --------------------------------------------------------
     def clean(self):
         """Validate rating and department consistency."""
-        if self.rating is not None and not (1 <= self.rating <= 10):
-            raise ValidationError("Rating must be between 1 and 10.")
+        if self.rating is not None and not (RATING_MIN <= self.rating <= RATING_MAX):
+            raise ValidationError({"rating": f"Rating must be between {RATING_MIN} and {RATING_MAX}."})
+
         if self.employee and self.department:
             if self.employee.department and self.department != self.employee.department:
-                raise ValidationError(
-                    {"department": "Department does not match the employee’s assigned department."}
-                )
+                raise ValidationError({"department": "Department does not match the employee’s assigned department."})
 
     def save(self, *args, **kwargs):
-        """Auto-fill department if missing and trigger notifications."""
+        """Auto-fill department, source_type, and trigger optional notification."""
         if self.employee and not self.department:
             self.department = self.employee.department
+
+        # Auto-derive source type
+        if not self.source_type:
+            self.source_type = self.__class__.__name__.replace("Feedback", "")
+
         self.full_clean()
         super().save(*args, **kwargs)
 
         # ----------------------------------------------
-        # Optional Notification (if notifications app installed)
+        # Optional Notification Trigger
         # ----------------------------------------------
         try:
             from notifications.models import Notification
-            Notification.objects.create(
-                employee=self.employee.user,
-                message=f"New {self.__class__.__name__.replace('Feedback', '').strip()} feedback received "
-                        f"on {self.feedback_date.strftime('%d %b %Y')} (Rating: {self.rating}/10).",
-                auto_delete=True,
-            )
+            if hasattr(self.employee, "user"):
+                Notification.objects.create(
+                    employee=self.employee.user,
+                    message=(
+                        f"📢 New {self.source_type} feedback received "
+                        f"on {self.feedback_date.strftime('%d %b %Y')} "
+                        f"(Rating: {self.rating}/10)."
+                    ),
+                    auto_delete=True,
+                )
         except Exception:
-            # Fail silently if notifications app not ready
+            # Fail silently if Notification model unavailable
             pass
 
 
-# ============================================================
+# ===========================================================
 # ✅ Concrete Feedback Models
-# ============================================================
+# ===========================================================
 class GeneralFeedback(BaseFeedback):
-    """
-    General feedback typically given by Admins or HR staff.
-    Covers attitude, teamwork, and overall workplace behavior.
-    """
+    """General feedback (usually from Admins or HR staff)."""
 
     class Meta:
         verbose_name = "General Feedback"
@@ -129,15 +156,19 @@ class GeneralFeedback(BaseFeedback):
 
 
 class ManagerFeedback(BaseFeedback):
-    """
-    Feedback given by a manager about an employee’s performance.
-    """
+    """Feedback given by a manager about an employee’s performance."""
     manager_name = models.CharField(
         max_length=150,
         blank=True,
         null=True,
-        help_text="Manager's name (auto-filled or entered manually).",
+        help_text="Manager's name (auto-filled if available).",
     )
+
+    def save(self, *args, **kwargs):
+        # Auto-fill manager_name if empty
+        if not self.manager_name and self.created_by:
+            self.manager_name = f"{getattr(self.created_by, 'first_name', '')} {getattr(self.created_by, 'last_name', '')}".strip()
+        super().save(*args, **kwargs)
 
     class Meta:
         verbose_name = "Manager Feedback"
@@ -145,15 +176,19 @@ class ManagerFeedback(BaseFeedback):
 
 
 class ClientFeedback(BaseFeedback):
-    """
-    Feedback provided by clients regarding project quality, delivery, or support.
-    """
+    """Feedback provided by clients regarding project quality, delivery, or support."""
     client_name = models.CharField(
         max_length=150,
         blank=True,
         null=True,
         help_text="Client's name or organization giving the feedback.",
     )
+
+    def save(self, *args, **kwargs):
+        # Default to 'Anonymous Client' if no name
+        if not self.client_name:
+            self.client_name = "Anonymous Client"
+        super().save(*args, **kwargs)
 
     class Meta:
         verbose_name = "Client Feedback"

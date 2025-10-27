@@ -1,12 +1,3 @@
-# ===============================================
-# reports/serializers.py (Final Updated — 2025-10-26)
-# ===============================================
-# Combines Performance + Feedback + Employee data
-# for weekly, monthly, manager-wise, department-wise,
-# and employee history reports.
-# Fully aligned with frontend and API validation.
-# ===============================================
-
 from rest_framework import serializers
 from performance.models import PerformanceEvaluation
 from feedback.models import GeneralFeedback, ManagerFeedback, ClientFeedback
@@ -15,10 +6,22 @@ from .models import CachedReport
 
 
 # =====================================================
+# 🧩 MIXIN — Standardized Score Rounding
+# =====================================================
+class ScoreMixin:
+    """Provides consistent rounding for numeric scores."""
+
+    def round_score(self, value):
+        if value is None:
+            return 0.0
+        return round(float(value), 2)
+
+
+# =====================================================
 # ✅ 1. BASIC EMPLOYEE SERIALIZER (Used Across Reports)
 # =====================================================
-class SimpleEmployeeSerializer(serializers.ModelSerializer):
-    full_name = serializers.SerializerMethodField(read_only=True)
+class SimpleEmployeeSerializer(serializers.ModelSerializer, ScoreMixin):
+    full_name = serializers.SerializerMethodField()
     department_name = serializers.CharField(source="department.name", read_only=True)
     emp_id = serializers.CharField(source="user.emp_id", read_only=True)
     email = serializers.EmailField(source="user.email", read_only=True)
@@ -37,7 +40,7 @@ class SimpleEmployeeSerializer(serializers.ModelSerializer):
 # =====================================================
 # ✅ 2. WEEKLY REPORT SERIALIZER
 # =====================================================
-class WeeklyReportSerializer(serializers.Serializer):
+class WeeklyReportSerializer(serializers.Serializer, ScoreMixin):
     """Represents a single week's consolidated employee performance."""
     emp_id = serializers.CharField()
     employee_full_name = serializers.CharField()
@@ -50,11 +53,17 @@ class WeeklyReportSerializer(serializers.Serializer):
     rank = serializers.IntegerField(allow_null=True)
     remarks = serializers.CharField(allow_blank=True, allow_null=True, required=False)
 
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        rep["average_score"] = self.round_score(rep["average_score"])
+        rep["feedback_avg"] = self.round_score(rep["feedback_avg"])
+        return rep
+
 
 # =====================================================
 # ✅ 3. MONTHLY REPORT SERIALIZER
 # =====================================================
-class MonthlyReportSerializer(serializers.Serializer):
+class MonthlyReportSerializer(serializers.Serializer, ScoreMixin):
     """Aggregated monthly performance and feedback summary."""
     emp_id = serializers.CharField()
     employee_full_name = serializers.CharField()
@@ -66,11 +75,17 @@ class MonthlyReportSerializer(serializers.Serializer):
     best_week = serializers.IntegerField()
     best_week_score = serializers.FloatField()
 
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        rep["avg_score"] = self.round_score(rep["avg_score"])
+        rep["feedback_avg"] = self.round_score(rep.get("feedback_avg", 0))
+        return rep
+
 
 # =====================================================
 # ✅ 4. EMPLOYEE HISTORY SERIALIZER
 # =====================================================
-class EmployeeHistorySerializer(serializers.Serializer):
+class EmployeeHistorySerializer(serializers.Serializer, ScoreMixin):
     """Weekly trend view for an employee’s performance timeline."""
     week_number = serializers.IntegerField()
     year = serializers.IntegerField()
@@ -79,11 +94,17 @@ class EmployeeHistorySerializer(serializers.Serializer):
     remarks = serializers.CharField(allow_null=True)
     rank = serializers.IntegerField(allow_null=True)
 
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        rep["average_score"] = self.round_score(rep["average_score"])
+        rep["feedback_avg"] = self.round_score(rep["feedback_avg"])
+        return rep
+
 
 # =====================================================
 # ✅ 5. MANAGER-WISE REPORT SERIALIZER
 # =====================================================
-class ManagerReportSerializer(serializers.Serializer):
+class ManagerReportSerializer(serializers.Serializer, ScoreMixin):
     """Weekly report for all employees under a specific manager."""
     manager_full_name = serializers.CharField()
     emp_id = serializers.CharField()
@@ -97,11 +118,17 @@ class ManagerReportSerializer(serializers.Serializer):
     rank = serializers.IntegerField(allow_null=True)
     remarks = serializers.CharField(allow_blank=True, allow_null=True)
 
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        rep["average_score"] = self.round_score(rep["average_score"])
+        rep["feedback_avg"] = self.round_score(rep["feedback_avg"])
+        return rep
+
 
 # =====================================================
 # ✅ 6. DEPARTMENT-WISE REPORT SERIALIZER
 # =====================================================
-class DepartmentReportSerializer(serializers.Serializer):
+class DepartmentReportSerializer(serializers.Serializer, ScoreMixin):
     """Weekly report across all employees in a department."""
     department_name = serializers.CharField()
     emp_id = serializers.CharField()
@@ -115,6 +142,12 @@ class DepartmentReportSerializer(serializers.Serializer):
     rank = serializers.IntegerField(allow_null=True)
     remarks = serializers.CharField(allow_blank=True, allow_null=True)
 
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        rep["average_score"] = self.round_score(rep["average_score"])
+        rep["feedback_avg"] = self.round_score(rep["feedback_avg"])
+        return rep
+
 
 # =====================================================
 # ✅ 7. CACHED REPORT SERIALIZER (DB MODEL)
@@ -124,32 +157,20 @@ class CachedReportSerializer(serializers.ModelSerializer):
     generated_by_full_name = serializers.SerializerMethodField(read_only=True)
     generated_by_name = serializers.CharField(source="generated_by.username", read_only=True)
     period_display = serializers.SerializerMethodField(read_only=True)
+    report_label = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = CachedReport
         fields = [
-            "id",
-            "report_type",
-            "year",
-            "week_number",
-            "month",
-            "manager",
-            "department",
-            "payload",
-            "file_path",
-            "generated_at",
-            "generated_by",
-            "generated_by_name",
-            "generated_by_full_name",
-            "is_active",
-            "period_display",
+            "id", "report_type", "year", "week_number", "month",
+            "manager", "department", "payload", "file_path",
+            "generated_at", "generated_by", "generated_by_name",
+            "generated_by_full_name", "is_active", "period_display",
+            "report_label",
         ]
         read_only_fields = [
-            "id",
-            "generated_at",
-            "generated_by_name",
-            "generated_by_full_name",
-            "period_display",
+            "id", "generated_at", "generated_by_name",
+            "generated_by_full_name", "period_display", "report_label",
         ]
 
     def get_generated_by_full_name(self, obj):
@@ -159,19 +180,22 @@ class CachedReportSerializer(serializers.ModelSerializer):
         return "-"
 
     def get_period_display(self, obj):
-        """Readable period text for dashboards and exports."""
-        if obj.report_type in ["weekly", "manager", "department"] and obj.week_number:
-            return f"Week {obj.week_number}, {obj.year}"
-        if obj.report_type == "monthly" and obj.month:
-            return f"Month {obj.month}, {obj.year}"
-        return str(obj.year)
+        """Readable period for dashboards and exports."""
+        return obj.get_period_display()
+
+    def get_report_label(self, obj):
+        """Return contextual label for frontend cards."""
+        return obj.report_scope
 
 
 # =====================================================
 # ✅ 8. COMBINED / AGGREGATED REPORT SERIALIZER
 # =====================================================
-class CombinedReportSerializer(serializers.Serializer):
-    """Combines performance + feedback data into a single analytic payload."""
+class CombinedReportSerializer(serializers.Serializer, ScoreMixin):
+    """
+    Combines performance + feedback + ranking into a single analytic payload.
+    Used for analytics dashboards and Power BI export APIs.
+    """
     type = serializers.ChoiceField(choices=["weekly", "monthly", "manager", "department"])
     year = serializers.IntegerField()
     week_or_month = serializers.IntegerField()
@@ -181,6 +205,8 @@ class CombinedReportSerializer(serializers.Serializer):
     top_performers = serializers.ListField(child=serializers.CharField())
     weak_performers = serializers.ListField(child=serializers.CharField())
     feedback_summary = serializers.DictField(child=serializers.FloatField())
+    top3_ranking = serializers.ListField(child=serializers.DictField(), required=False)
+    weak3_ranking = serializers.ListField(child=serializers.DictField(), required=False)
 
     def validate(self, data):
         """Ensure numeric bounds for week/month."""
@@ -192,3 +218,9 @@ class CombinedReportSerializer(serializers.Serializer):
         if report_type == "monthly" and not (1 <= period <= 12):
             raise serializers.ValidationError({"week_or_month": "Invalid month (must be 1–12)."})
         return data
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        rep["average_org_score"] = self.round_score(rep["average_org_score"])
+        rep["feedback_summary"] = {k: self.round_score(v) for k, v in rep["feedback_summary"].items()}
+        return rep

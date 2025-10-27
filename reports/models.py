@@ -1,10 +1,8 @@
-# ===============================================
-# reports/models.py  (Frontend & API-Ready)
-# ===============================================
-
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
+from django.core.exceptions import ValidationError
+import os
 
 
 class CachedReport(models.Model):
@@ -20,7 +18,9 @@ class CachedReport(models.Model):
         ("department", "Department-wise Report"),
     ]
 
+    # -----------------------------------------------------------
     # 🔹 Identification Fields
+    # -----------------------------------------------------------
     report_type = models.CharField(
         max_length=20,
         choices=REPORT_TYPE_CHOICES,
@@ -36,7 +36,9 @@ class CachedReport(models.Model):
         help_text="Month number (used for monthly reports)"
     )
 
+    # -----------------------------------------------------------
     # 🔹 Optional Relationships
+    # -----------------------------------------------------------
     manager = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -52,12 +54,16 @@ class CachedReport(models.Model):
         help_text="Department reference for department-wise reports"
     )
 
+    # -----------------------------------------------------------
     # 🔹 Cached Payload
+    # -----------------------------------------------------------
     payload = models.JSONField(
         help_text="Cached JSON data (aggregated summary, KPIs, and metrics)"
     )
 
+    # -----------------------------------------------------------
     # 🔹 Metadata
+    # -----------------------------------------------------------
     generated_at = models.DateTimeField(default=timezone.now)
     generated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -73,6 +79,9 @@ class CachedReport(models.Model):
     )
     is_active = models.BooleanField(default=True, help_text="Active or archived flag")
 
+    # -----------------------------------------------------------
+    # ⚙️ Model Meta
+    # -----------------------------------------------------------
     class Meta:
         ordering = ["-generated_at"]
         verbose_name = "Cached Report"
@@ -89,22 +98,55 @@ class CachedReport(models.Model):
             models.Index(fields=["week_number"]),
             models.Index(fields=["report_type"]),
         ]
+        index_together = [
+            ("report_type", "year", "week_number"),
+            ("report_type", "year", "month"),
+        ]
 
-    # ------------------------------------------------------------
-    # Helper Methods
-    # ------------------------------------------------------------
-    def __str__(self):
-        """Readable name for admin, logs, and UI labels."""
-        if self.report_type == "weekly" and self.week_number:
-            return f"📅 Weekly Report — Week {self.week_number}, {self.year}"
-        elif self.report_type == "monthly" and self.month:
-            return f"📊 Monthly Report — Month {self.month}, {self.year}"
-        elif self.report_type == "manager" and self.manager:
-            return f"👨‍💼 Manager Report — {self.manager.get_full_name()} (Week {self.week_number}, {self.year})"
-        elif self.report_type == "department" and self.department:
-            return f"🏢 Department Report — {self.department.name} (Week {self.week_number}, {self.year})"
-        return f"{self.report_type.title()} Report ({self.year})"
+    # -----------------------------------------------------------
+    # 🔍 Validation
+    # -----------------------------------------------------------
+    def clean(self):
+        """Ensure the correct combination of fields are set based on report_type."""
+        if self.report_type in ["weekly", "manager", "department"] and not self.week_number:
+            raise ValidationError("Week number is required for weekly/manager/department reports.")
+        if self.report_type == "monthly" and not self.month:
+            raise ValidationError("Month is required for monthly reports.")
 
+    # -----------------------------------------------------------
+    # 💾 Save Override
+    # -----------------------------------------------------------
+    def save(self, *args, **kwargs):
+        """Update generated_at timestamp and validate before saving."""
+        self.full_clean()
+        self.generated_at = timezone.now()
+        super().save(*args, **kwargs)
+
+    # -----------------------------------------------------------
+    # 🪶 Helper: Filename Generator
+    # -----------------------------------------------------------
+    def generate_filename(self, extension="csv"):
+        """Return a clean, unique filename for export."""
+        base = f"{self.report_type.title()}_{self.get_period_display()}".replace(" ", "_")
+        timestamp = timezone.now().strftime("%Y%m%d_%H%M")
+        safe_name = base.replace(":", "").replace(",", "").replace("__", "_")
+        return f"{safe_name}_{timestamp}.{extension}"
+
+    # -----------------------------------------------------------
+    # 🧩 Helper: Summary Payload (for dashboard cards)
+    # -----------------------------------------------------------
+    def get_payload_summary(self):
+        """Return summarized statistics from the payload."""
+        data = self.payload.get("records", [])
+        if not data:
+            return {"count": 0, "avg_score": 0, "top_emp": None}
+        avg_score = round(sum(r.get("average_score", 0) for r in data) / len(data), 2)
+        top = max(data, key=lambda r: r.get("average_score", 0), default={})
+        return {"count": len(data), "avg_score": avg_score, "top_emp": top.get("employee_full_name")}
+
+    # -----------------------------------------------------------
+    # 🧠 Helper: Readable Period
+    # -----------------------------------------------------------
     def get_period_display(self):
         """Return formatted label for UI cards and exports."""
         if self.report_type in ["weekly", "manager", "department"] and self.week_number:
@@ -113,8 +155,23 @@ class CachedReport(models.Model):
             return f"Month {self.month}, {self.year}"
         return str(self.year)
 
+    # -----------------------------------------------------------
+    # 🪶 Helper: Scope (UI Label)
+    # -----------------------------------------------------------
+    @property
+    def report_scope(self):
+        """Return a detailed label for UI cards and cache management."""
+        if self.report_type == "manager" and self.manager:
+            return f"Manager: {self.manager.get_full_name()} ({self.get_period_display()})"
+        elif self.report_type == "department" and self.department:
+            return f"Dept: {self.department.name} ({self.get_period_display()})"
+        return f"{self.report_type.title()} ({self.get_period_display()})"
+
+    # -----------------------------------------------------------
+    # ♻️ Archive / Restore
+    # -----------------------------------------------------------
     def soft_delete(self):
-        """Archive a report instead of permanent deletion."""
+        """Archive a report instead of deleting."""
         self.is_active = False
         self.save(update_fields=["is_active"])
 
@@ -123,7 +180,27 @@ class CachedReport(models.Model):
         self.is_active = True
         self.save(update_fields=["is_active"])
 
+    # -----------------------------------------------------------
+    # 📦 Static Utility
+    # -----------------------------------------------------------
     @staticmethod
     def get_latest(report_type):
         """Return the most recent active report of a specific type."""
-        return CachedReport.objects.filter(report_type=report_type, is_active=True).order_by("-generated_at").first()
+        return CachedReport.objects.filter(
+            report_type=report_type, is_active=True
+        ).order_by("-generated_at").first()
+
+    # -----------------------------------------------------------
+    # 🪪 String Representation
+    # -----------------------------------------------------------
+    def __str__(self):
+        """Readable name for admin, logs, and UI labels."""
+        if self.report_type == "weekly" and self.week_number:
+            return f"📅 Weekly Report — Week {self.week_number}, {self.year}"
+        elif self.report_type == "monthly" and self.month:
+            return f"📊 Monthly Report — Month {self.month}, {self.year}"
+        elif self.report_type == "manager" and self.manager:
+            return f"👨‍💼 Manager Report — {self.manager.get_full_name()} ({self.get_period_display()})"
+        elif self.report_type == "department" and self.department:
+            return f"🏢 Department Report — {self.department.name} ({self.get_period_display()})"
+        return f"{self.report_type.title()} Report ({self.year})"
