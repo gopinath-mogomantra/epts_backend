@@ -1,11 +1,8 @@
-# ===========================================================
-# performance/models.py  (Frontend & API Validation Ready)
-# ===========================================================
-
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
 from django.core.exceptions import ValidationError
+from datetime import timedelta
 
 
 # -----------------------------------------------------------
@@ -19,6 +16,13 @@ def current_week_number():
 def current_year():
     """Return the current year."""
     return timezone.now().year
+
+
+def get_week_range(date):
+    """Return start and end dates for the week of given date."""
+    start = date - timedelta(days=date.weekday())  # Monday
+    end = start + timedelta(days=6)  # Sunday
+    return start, end
 
 
 # -----------------------------------------------------------
@@ -57,7 +61,7 @@ class PerformanceEvaluation(models.Model):
     )
 
     # -------------------------------------------------------
-    # Meta Info
+    # Period Info
     # -------------------------------------------------------
     review_date = models.DateField(default=timezone.localdate)
     week_number = models.PositiveSmallIntegerField(default=current_week_number)
@@ -110,13 +114,13 @@ class PerformanceEvaluation(models.Model):
     remarks = models.TextField(blank=True, null=True)
 
     # -------------------------------------------------------
-    # Audit
+    # Audit Fields
     # -------------------------------------------------------
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     # -------------------------------------------------------
-    # Meta Options
+    # Meta Configuration
     # -------------------------------------------------------
     class Meta:
         ordering = ["-review_date", "-created_at"]
@@ -127,6 +131,8 @@ class PerformanceEvaluation(models.Model):
             models.Index(fields=["employee"]),
             models.Index(fields=["department"]),
             models.Index(fields=["week_number", "year"]),
+            models.Index(fields=["evaluation_type"]),
+            models.Index(fields=["average_score"]),
         ]
 
     # -------------------------------------------------------
@@ -162,13 +168,66 @@ class PerformanceEvaluation(models.Model):
         return total
 
     # -------------------------------------------------------
+    # Rank Calculation (for automation or API endpoint)
+    # -------------------------------------------------------
+    def calculate_rank(self):
+        """Compute rank within the same department/week."""
+        evaluations = PerformanceEvaluation.objects.filter(
+            department=self.department,
+            week_number=self.week_number,
+            year=self.year,
+            evaluation_type=self.evaluation_type,
+        ).order_by("-average_score", "employee__user__first_name")
+
+        for index, eval_obj in enumerate(evaluations, start=1):
+            eval_obj.rank = index
+            eval_obj.save(update_fields=["rank"])
+        return self.rank
+
+    # -------------------------------------------------------
+    # Helpers
+    # -------------------------------------------------------
+    def get_metric_summary(self):
+        """Return compact JSON summary for reports/dashboards."""
+        return {
+            "communication": self.communication_skills,
+            "teamwork": self.team_skills,
+            "productivity": self.productivity,
+            "creativity": self.creativity,
+            "attendance": self.attendance,
+            "quality": self.work_quality,
+            "average": self.average_score,
+            "rank": self.rank,
+        }
+
+    def department_rank(self):
+        """Return department rank position for this employee."""
+        qs = PerformanceEvaluation.objects.filter(
+            department=self.department,
+            week_number=self.week_number,
+            year=self.year,
+        ).order_by("-average_score")
+        return list(qs).index(self) + 1 if self in qs else None
+
+    def overall_rank(self):
+        """Return overall organization-wide rank."""
+        qs = PerformanceEvaluation.objects.filter(
+            week_number=self.week_number,
+            year=self.year,
+        ).order_by("-average_score")
+        return list(qs).index(self) + 1 if self in qs else None
+
+    # -------------------------------------------------------
     # Save Override
     # -------------------------------------------------------
     def save(self, *args, **kwargs):
-        """Auto-calculate total, average, and evaluation period before saving."""
+        """Auto-calculate total, average, and readable period before saving."""
         self.calculate_total_score()
+
         if not self.evaluation_period:
-            self.evaluation_period = f"Week {self.week_number} ({self.review_date.strftime('%d %b %Y')})"
+            start, end = get_week_range(self.review_date)
+            self.evaluation_period = f"Week {self.week_number} ({start.strftime('%d %b')} - {end.strftime('%d %b %Y')})"
+
         super().save(*args, **kwargs)
 
     # -------------------------------------------------------

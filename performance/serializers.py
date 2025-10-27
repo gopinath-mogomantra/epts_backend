@@ -1,7 +1,3 @@
-# ===========================================================
-# performance/serializers.py  (Frontend-Aligned & API Validation Ready)
-# ===========================================================
-
 from rest_framework import serializers
 from django.utils import timezone
 from django.contrib.auth import get_user_model
@@ -23,9 +19,7 @@ class SimpleUserSerializer(serializers.ModelSerializer):
         fields = ["id", "emp_id", "first_name", "last_name", "full_name", "email", "role"]
 
     def get_full_name(self, obj):
-        first = obj.first_name or ""
-        last = obj.last_name or ""
-        return f"{first} {last}".strip()
+        return f"{obj.first_name or ''} {obj.last_name or ''}".strip()
 
 
 class SimpleDepartmentSerializer(serializers.ModelSerializer):
@@ -36,37 +30,24 @@ class SimpleDepartmentSerializer(serializers.ModelSerializer):
 
 class SimpleEmployeeSerializer(serializers.ModelSerializer):
     user = SimpleUserSerializer(read_only=True)
-    role = serializers.SerializerMethodField()
-    manager_name = serializers.SerializerMethodField()
     department_name = serializers.CharField(source="department.name", read_only=True)
     full_name = serializers.SerializerMethodField(read_only=True)
+    manager_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Employee
         fields = [
-            "id",
-            "user",
-            "designation",
-            "status",
-            "role",
-            "department_name",
-            "full_name",
-            "manager_name",
+            "id", "user", "designation", "status", "role",
+            "department_name", "full_name", "manager_name",
         ]
 
-    def get_role(self, obj):
-        return getattr(obj.user, "role", None)
-
     def get_full_name(self, obj):
-        """Return employee full name."""
-        u = obj.user
-        return f"{u.first_name} {u.last_name}".strip()
+        return f"{obj.user.first_name} {obj.user.last_name}".strip()
 
     def get_manager_name(self, obj):
-        """Return manager’s full name if assigned."""
         if obj.manager and obj.manager.user:
-            m = obj.manager.user
-            return f"{m.first_name} {m.last_name}".strip()
+            mgr = obj.manager.user
+            return f"{mgr.first_name} {mgr.last_name}".strip()
         return "-"
 
 
@@ -77,53 +58,40 @@ class PerformanceEvaluationSerializer(serializers.ModelSerializer):
     employee = SimpleEmployeeSerializer(read_only=True)
     evaluator = SimpleUserSerializer(read_only=True)
     department = SimpleDepartmentSerializer(read_only=True)
-    evaluation_summary = serializers.SerializerMethodField()
+
+    metrics_breakdown = serializers.SerializerMethodField()
     score_display = serializers.SerializerMethodField()
     week_label = serializers.SerializerMethodField()
 
     class Meta:
         model = PerformanceEvaluation
         fields = [
-            "id",
-            "employee",
-            "evaluator",
-            "department",
-            "evaluation_type",
-            "review_date",
-            "evaluation_period",
-            "week_number",
-            "year",
-            "week_label",
-            "evaluation_summary",
-            "total_score",
-            "average_score",
-            "rank",
-            "score_display",
-            "remarks",
-            "created_at",
-            "updated_at",
+            "id", "employee", "evaluator", "department",
+            "evaluation_type", "review_date", "evaluation_period",
+            "week_number", "year", "week_label",
+            "metrics_breakdown", "total_score", "average_score",
+            "rank", "score_display", "remarks", "created_at", "updated_at",
         ]
 
-    def get_evaluation_summary(self, obj):
-        """Return all metrics as key-value list for frontend charts."""
-        metrics = [
-            ("Communication Skills", obj.communication_skills),
-            ("Multitasking", obj.multitasking),
-            ("Team Skills", obj.team_skills),
-            ("Technical Skills", obj.technical_skills),
-            ("Job Knowledge", obj.job_knowledge),
-            ("Productivity", obj.productivity),
-            ("Creativity", obj.creativity),
-            ("Work Quality", obj.work_quality),
-            ("Professionalism", obj.professionalism),
-            ("Work Consistency", obj.work_consistency),
-            ("Attitude", obj.attitude),
-            ("Cooperation", obj.cooperation),
-            ("Dependability", obj.dependability),
-            ("Attendance", obj.attendance),
-            ("Punctuality", obj.punctuality),
-        ]
-        return [{"metric": n, "score": s} for n, s in metrics]
+    def get_metrics_breakdown(self, obj):
+        """Return all metric fields for frontend radar/bar charts."""
+        return {
+            "communication": obj.communication_skills,
+            "multitasking": obj.multitasking,
+            "team_skills": obj.team_skills,
+            "technical_skills": obj.technical_skills,
+            "job_knowledge": obj.job_knowledge,
+            "productivity": obj.productivity,
+            "creativity": obj.creativity,
+            "work_quality": obj.work_quality,
+            "professionalism": obj.professionalism,
+            "consistency": obj.work_consistency,
+            "attitude": obj.attitude,
+            "cooperation": obj.cooperation,
+            "dependability": obj.dependability,
+            "attendance": obj.attendance,
+            "punctuality": obj.punctuality,
+        }
 
     def get_score_display(self, obj):
         return f"{obj.total_score} / 1500 ({obj.average_score}%)"
@@ -131,45 +99,36 @@ class PerformanceEvaluationSerializer(serializers.ModelSerializer):
     def get_week_label(self, obj):
         return f"Week {obj.week_number}, {obj.year}"
 
+    def to_representation(self, instance):
+        """Ensure uniform response even if some fields are null."""
+        rep = super().to_representation(instance)
+        rep["department_name"] = getattr(instance.department, "name", None)
+        rep["employee_name"] = f"{instance.employee.user.first_name} {instance.employee.user.last_name}".strip() if instance.employee and instance.employee.user else None
+        return rep
+
 
 # ===========================================================
 # ✅ CREATE / UPDATE SERIALIZER (emp_id + dept_code)
 # ===========================================================
 class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
     employee_emp_id = serializers.CharField(write_only=True)
-    evaluator_emp_id = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
-    department_code = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
+    evaluator_emp_id = serializers.CharField(write_only=True, required=False, allow_blank=True, allow_null=True)
+    department_code = serializers.CharField(write_only=True, required=False, allow_blank=True, allow_null=True)
 
     class Meta:
         model = PerformanceEvaluation
         fields = [
-            "id",
-            "employee_emp_id",
-            "evaluator_emp_id",
-            "department_code",
-            "evaluation_type",
-            "review_date",
-            "evaluation_period",
-            "communication_skills",
-            "multitasking",
-            "team_skills",
-            "technical_skills",
-            "job_knowledge",
-            "productivity",
-            "creativity",
-            "work_quality",
-            "professionalism",
-            "work_consistency",
-            "attitude",
-            "cooperation",
-            "dependability",
-            "attendance",
-            "punctuality",
-            "remarks",
+            "id", "employee_emp_id", "evaluator_emp_id", "department_code",
+            "evaluation_type", "review_date", "evaluation_period",
+            "communication_skills", "multitasking", "team_skills",
+            "technical_skills", "job_knowledge", "productivity", "creativity",
+            "work_quality", "professionalism", "work_consistency",
+            "attitude", "cooperation", "dependability", "attendance",
+            "punctuality", "remarks",
         ]
 
     # --------------------------------------------------------
-    # Validate Employee
+    # Field-Level Validations
     # --------------------------------------------------------
     def validate_employee_emp_id(self, value):
         try:
@@ -179,29 +138,25 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
         self.context["employee"] = emp
         return value
 
-    # --------------------------------------------------------
-    # Validate Evaluator
-    # --------------------------------------------------------
     def validate_evaluator_emp_id(self, value):
+        """Optional evaluator lookup."""
         if not value:
-            return None
+            return value
         try:
             evaluator = User.objects.get(emp_id__iexact=value)
         except User.DoesNotExist:
-            raise serializers.ValidationError(f"Evaluator with emp_id '{value}' not found.")
+            raise serializers.ValidationError(f"Evaluator '{value}' not found.")
         self.context["evaluator"] = evaluator
         return value
 
-    # --------------------------------------------------------
-    # Validate Department
-    # --------------------------------------------------------
     def validate_department_code(self, value):
+        """Optional department code validation."""
         if not value:
-            return None
+            return value
         try:
             dept = Department.objects.get(code__iexact=value, is_active=True)
         except Department.DoesNotExist:
-            raise serializers.ValidationError(f"Department with code '{value}' not found or inactive.")
+            raise serializers.ValidationError(f"Department '{value}' not found or inactive.")
         self.context["department"] = dept
         return value
 
@@ -213,9 +168,9 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
         review_date = attrs.get("review_date", timezone.now().date())
         evaluation_type = attrs.get("evaluation_type", "Manager")
 
-        # Prevent duplicate weekly evaluations
         week_number = review_date.isocalendar()[1]
         year = review_date.year
+
         existing = PerformanceEvaluation.objects.filter(
             employee=emp, week_number=week_number, year=year, evaluation_type=evaluation_type
         )
@@ -226,11 +181,19 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
                 f"Evaluation already exists for {emp.user.emp_id} (Week {week_number}, {year}, {evaluation_type})."
             )
 
+        # Metric sanity check (0–100)
+        for field, value in attrs.items():
+            if field in PerformanceEvaluation._meta.fields_map:
+                continue
+            if isinstance(value, int) and not (0 <= value <= 100):
+                raise serializers.ValidationError({field: "Metric scores must be between 0 and 100."})
+
         # Role restriction
         request = self.context.get("request")
         if request and hasattr(request.user, "role"):
             if request.user.role not in ["Admin", "Manager"]:
                 raise serializers.ValidationError({"role": "Only Admin or Manager can submit evaluations."})
+
         return attrs
 
     # --------------------------------------------------------
@@ -241,16 +204,21 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
         evaluator = self.context.get("evaluator", None)
         department = self.context.get("department", emp.department if emp else None)
 
+        # Auto-assign evaluator from logged-in user if not passed
+        request = self.context.get("request")
+        if not evaluator and request:
+            evaluator = request.user
+
+        # Clean unwanted fields
         for f in ["employee_emp_id", "evaluator_emp_id", "department_code"]:
             validated_data.pop(f, None)
 
-        evaluation = PerformanceEvaluation.objects.create(
+        return PerformanceEvaluation.objects.create(
             employee=emp,
             evaluator=evaluator,
             department=department,
             **validated_data,
         )
-        return evaluation
 
     # --------------------------------------------------------
     # UPDATE
@@ -263,7 +231,7 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
 
 
 # ===========================================================
-# ✅ DASHBOARD / SUMMARY SERIALIZER
+# ✅ DASHBOARD / RANKING SERIALIZER
 # ===========================================================
 class PerformanceDashboardSerializer(serializers.ModelSerializer):
     emp_id = serializers.SerializerMethodField()
@@ -275,19 +243,10 @@ class PerformanceDashboardSerializer(serializers.ModelSerializer):
     class Meta:
         model = PerformanceEvaluation
         fields = [
-            "id",
-            "emp_id",
-            "employee_full_name",
-            "manager_name",
-            "department_name",
-            "review_date",
-            "evaluation_period",
-            "evaluation_type",
-            "total_score",
-            "average_score",
-            "rank",
-            "score_display",
-            "remarks",
+            "id", "emp_id", "employee_full_name", "manager_name",
+            "department_name", "review_date", "evaluation_period",
+            "evaluation_type", "total_score", "average_score",
+            "rank", "score_display", "remarks",
         ]
 
     def get_emp_id(self, obj):
@@ -305,3 +264,20 @@ class PerformanceDashboardSerializer(serializers.ModelSerializer):
 
     def get_score_display(self, obj):
         return f"{obj.total_score} / 1500 ({obj.average_score}%)"
+
+
+# ===========================================================
+# ✅ PERFORMANCE RANK SERIALIZER (Top 3 / Weak 3)
+# ===========================================================
+class PerformanceRankSerializer(serializers.ModelSerializer):
+    emp_id = serializers.ReadOnlyField(source="employee.user.emp_id")
+    full_name = serializers.SerializerMethodField()
+    department_name = serializers.ReadOnlyField(source="department.name")
+
+    class Meta:
+        model = PerformanceEvaluation
+        fields = ["emp_id", "full_name", "department_name", "average_score", "rank"]
+
+    def get_full_name(self, obj):
+        u = obj.employee.user
+        return f"{u.first_name} {u.last_name}".strip()

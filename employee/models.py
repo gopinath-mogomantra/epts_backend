@@ -1,12 +1,10 @@
-# ===========================================================
-# employee/models.py  (API Validation & Frontend Integration Ready)
-# ===========================================================
-
 from django.db import models
 from django.utils import timezone
 from django.conf import settings
 from django.core.validators import RegexValidator
 from django.core.exceptions import ValidationError
+from django.db.models.signals import post_save
+from django.dispatch import receiver
 
 User = settings.AUTH_USER_MODEL
 
@@ -47,6 +45,16 @@ class Department(models.Model):
         """Used in dropdowns and frontend tables."""
         return f"{self.name} ({self.code})" if self.code else self.name
 
+    def deactivate(self):
+        """Soft deactivate a department (used by Admin panel)."""
+        self.is_active = False
+        self.save(update_fields=["is_active", "updated_at"])
+
+    def activate(self):
+        """Re-activate a previously inactive department."""
+        self.is_active = True
+        self.save(update_fields=["is_active", "updated_at"])
+
 
 # ===========================================================
 # ✅ EMPLOYEE MODEL
@@ -67,6 +75,7 @@ class Employee(models.Model):
         ("Active", "Active"),
         ("On Leave", "On Leave"),
         ("Resigned", "Resigned"),
+        ("Inactive", "Inactive"),
     ]
 
     # -------------------------------------------------------
@@ -166,13 +175,13 @@ class Employee(models.Model):
         return "Unassigned Employee"
 
     # -------------------------------------------------------
-    # Validation (light)
+    # Validation
     # -------------------------------------------------------
     def clean(self):
         """
-        Prevent invalid manager assignments.
+        Prevent invalid manager assignments:
         - Employee cannot be their own manager.
-        - Manager must have role='Manager' (for consistency).
+        - Manager must have role='Manager' or 'Admin'.
         """
         if self.manager and self.manager_id == self.id:
             raise ValidationError("An employee cannot be their own manager.")
@@ -213,5 +222,64 @@ class Employee(models.Model):
 
     @property
     def reporting_to_name(self):
-        """Alias for manager_name for React components."""
+        """Alias for manager_name for frontend display consistency."""
         return self.manager_name
+
+    @property
+    def team_size(self):
+        """Return number of direct team members reporting to this employee."""
+        return self.team_members.filter(is_active=True).count()
+
+    # -------------------------------------------------------
+    # Activation / Deactivation Utilities
+    # -------------------------------------------------------
+    def deactivate(self):
+        """Soft deactivate employee (status = Inactive, is_active=False)."""
+        self.status = "Inactive"
+        self.is_active = False
+        self.save(update_fields=["status", "is_active", "updated_at"])
+
+    def activate(self):
+        """Re-activate a previously inactive employee."""
+        self.status = "Active"
+        self.is_active = True
+        self.save(update_fields=["status", "is_active", "updated_at"])
+
+    # -------------------------------------------------------
+    # Query Helpers (For Manager & HR Views)
+    # -------------------------------------------------------
+    @classmethod
+    def active_employees(cls):
+        """Return queryset of all active employees."""
+        return cls.objects.filter(is_active=True, status="Active")
+
+    @classmethod
+    def get_by_department(cls, dept_name):
+        """Filter employees by department name."""
+        return cls.objects.filter(department__name__iexact=dept_name, is_active=True)
+
+    @classmethod
+    def get_team_members(cls, manager):
+        """Return all team members under a manager."""
+        return cls.objects.filter(manager=manager, is_active=True)
+
+
+# ===========================================================
+# ✅ SIGNALS — Auto Create Employee on User Creation
+# ===========================================================
+@receiver(post_save, sender=settings.AUTH_USER_MODEL)
+def auto_create_employee_profile(sender, instance, created, **kwargs):
+    """
+    Automatically create an Employee profile when a new User is created,
+    if the role is not Admin (Admin users are excluded).
+    """
+    if created and getattr(instance, "role", None) in ["Manager", "Employee"]:
+        from employee.models import Employee  # Local import to avoid circular dependency
+        if not hasattr(instance, "employee_profile"):
+            Employee.objects.create(
+                user=instance,
+                department=instance.department if hasattr(instance, "department") else None,
+                role=instance.role,
+                status="Active",
+                joining_date=getattr(instance, "joining_date", timezone.now().date()),
+            )

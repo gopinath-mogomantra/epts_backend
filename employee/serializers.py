@@ -1,9 +1,6 @@
-# ===========================================================
-# employee/serializers.py  (API Validation & Frontend Integration Ready)
-# ===========================================================
-
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from .models import Department, Employee
 import re
 
@@ -30,7 +27,7 @@ class DepartmentSerializer(serializers.ModelSerializer):
 
     def validate_name(self, value):
         """Ensure unique department name (case-insensitive)."""
-        qs = Department.objects.filter(name__iexact=value)
+        qs = Department.objects.filter(name__iexact=value.strip())
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
         if qs.exists():
@@ -41,23 +38,25 @@ class DepartmentSerializer(serializers.ModelSerializer):
         """Ensure unique department code (case-insensitive)."""
         if not value:
             return value
-        qs = Department.objects.filter(code__iexact=value)
+        qs = Department.objects.filter(code__iexact=value.strip())
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
         if qs.exists():
-            raise serializers.ValidationError("Department with this code already exists.")
+            raise serializers.ValidationError("Department code already exists.")
         return value.strip().upper()
 
     def validate_is_active(self, value):
         """Prevent deactivating department with active employees."""
         if self.instance and not value:
             if Employee.objects.filter(department=self.instance, status="Active").exists():
-                raise serializers.ValidationError("Cannot deactivate a department with active employees.")
+                raise serializers.ValidationError(
+                    "Cannot deactivate a department with active employees."
+                )
         return value
 
 
 # ===========================================================
-# ✅ USER SUMMARY SERIALIZER (For nested employee responses)
+# ✅ USER SUMMARY SERIALIZER (Nested for Employee)
 # ===========================================================
 class UserSummarySerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField(read_only=True)
@@ -71,7 +70,7 @@ class UserSummarySerializer(serializers.ModelSerializer):
 
 
 # ===========================================================
-# ✅ EMPLOYEE SERIALIZER (For listing and details)
+# ✅ EMPLOYEE SERIALIZER (Detailed)
 # ===========================================================
 class EmployeeSerializer(serializers.ModelSerializer):
     user = UserSummarySerializer(read_only=True)
@@ -88,6 +87,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField(read_only=True)
     email = serializers.ReadOnlyField(source="user.email")
     role = serializers.ReadOnlyField(source="user.role")
+    team_size = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = Employee
@@ -95,7 +95,8 @@ class EmployeeSerializer(serializers.ModelSerializer):
             "id", "user", "emp_id", "first_name", "last_name", "full_name", "email",
             "contact_number", "department", "department_name", "department_code",
             "role", "manager", "manager_name", "reporting_to", "designation",
-            "status", "is_active", "joining_date", "created_at", "updated_at",
+            "status", "is_active", "joining_date", "team_size",
+            "created_at", "updated_at",
         ]
         read_only_fields = ["created_at", "updated_at"]
 
@@ -154,9 +155,16 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("This contact number is already used by another employee.")
         return value
 
+    def validate_role(self, value):
+        """Prevent invalid role assignment."""
+        if value not in dict(User.ROLE_CHOICES):
+            raise serializers.ValidationError("Invalid role. Choose Admin, Manager, or Employee.")
+        return value
+
     # -------------------------------------------------------
     # CREATE
     # -------------------------------------------------------
+    @transaction.atomic
     def create(self, validated_data):
         department_code = validated_data.pop("department_code", None)
         manager_emp_id = validated_data.pop("manager", None)
@@ -164,9 +172,8 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
         # Lookup department
         department = None
         if department_code:
-            try:
-                department = Department.objects.get(code__iexact=department_code)
-            except Department.DoesNotExist:
+            department = Department.objects.filter(code__iexact=department_code).first()
+            if not department:
                 raise serializers.ValidationError({"department_code": f"Department '{department_code}' not found."})
             if not department.is_active:
                 raise serializers.ValidationError({"department_code": f"Cannot assign to inactive department '{department_code}'."})
@@ -174,12 +181,11 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
         # Lookup manager
         manager = None
         if manager_emp_id:
-            try:
-                manager = Employee.objects.get(user__emp_id__iexact=manager_emp_id)
-            except Employee.DoesNotExist:
+            manager = Employee.objects.filter(user__emp_id__iexact=manager_emp_id).first()
+            if not manager:
                 raise serializers.ValidationError({"manager": f"Manager '{manager_emp_id}' not found."})
             if manager.user.role not in ["Manager", "Admin"]:
-                raise serializers.ValidationError({"manager": f"Assigned manager '{manager_emp_id}' is not a Manager/Admin role."})
+                raise serializers.ValidationError({"manager": f"Assigned manager '{manager_emp_id}' must be Manager/Admin."})
 
         # Extract user fields
         email = validated_data.pop("email")
@@ -210,12 +216,12 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
     # -------------------------------------------------------
     # UPDATE
     # -------------------------------------------------------
+    @transaction.atomic
     def update(self, instance, validated_data):
         department_code = validated_data.pop("department_code", None)
         if department_code:
-            try:
-                department = Department.objects.get(code__iexact=department_code)
-            except Department.DoesNotExist:
+            department = Department.objects.filter(code__iexact=department_code).first()
+            if not department:
                 raise serializers.ValidationError({"department_code": f"Department '{department_code}' not found."})
             if not department.is_active:
                 raise serializers.ValidationError({"department_code": f"Cannot assign to inactive department '{department_code}'."})
@@ -223,12 +229,11 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
 
         manager_emp_id = validated_data.pop("manager", None)
         if manager_emp_id:
-            try:
-                manager = Employee.objects.get(user__emp_id__iexact=manager_emp_id)
-            except Employee.DoesNotExist:
+            manager = Employee.objects.filter(user__emp_id__iexact=manager_emp_id).first()
+            if not manager:
                 raise serializers.ValidationError({"manager": f"Manager '{manager_emp_id}' not found."})
             if manager.user.role not in ["Manager", "Admin"]:
-                raise serializers.ValidationError({"manager": f"Assigned manager '{manager_emp_id}' is not a Manager/Admin role."})
+                raise serializers.ValidationError({"manager": f"Assigned manager '{manager_emp_id}' must be Manager/Admin."})
             instance.manager = manager
 
         # Update linked user details
@@ -243,3 +248,27 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
             setattr(instance, field, value)
         instance.save()
         return instance
+
+
+# ===========================================================
+# ✅ EMPLOYEE DASHBOARD SERIALIZER (Compact for Listings)
+# ===========================================================
+class EmployeeDashboardSerializer(serializers.ModelSerializer):
+    emp_id = serializers.ReadOnlyField(source="user.emp_id")
+    full_name = serializers.SerializerMethodField()
+    email = serializers.ReadOnlyField(source="user.email")
+    department_name = serializers.ReadOnlyField(source="department.name")
+    manager_name = serializers.ReadOnlyField()
+    role = serializers.ReadOnlyField(source="user.role")
+    status = serializers.CharField()
+    team_size = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = Employee
+        fields = [
+            "id", "emp_id", "full_name", "email", "department_name",
+            "manager_name", "role", "status", "joining_date", "team_size"
+        ]
+
+    def get_full_name(self, obj):
+        return f"{obj.user.first_name or ''} {obj.user.last_name or ''}".strip() or obj.user.username

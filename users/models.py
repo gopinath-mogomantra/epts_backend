@@ -1,110 +1,183 @@
-# ===========================================================
 # users/models.py
+# ===========================================================
+# Production-ready User model (Custom user with emp_id)
+# - Uses a dedicated UserManager
+# - Emp_id generation (EMP0001 style) with caveats documented
+# - Account lockout / unlock logic
+# - Field validators, indexes, and meta options
 # ===========================================================
 
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
 from django.core.validators import RegexValidator
 from django.utils.crypto import get_random_string
-from datetime import timedelta, datetime
-import os
+from django.core.exceptions import ValidationError
+import logging
+
+logger = logging.getLogger(__name__)
 
 
-# ===========================================================
+# -----------------------------------------------------------
 # USER MANAGER
-# ===========================================================
+# -----------------------------------------------------------
 class UserManager(BaseUserManager):
-    """Handles user creation and Employee ID generation."""
+    """
+    Custom manager for User.
 
-    def generate_emp_id(self):
-        """Generate next sequential Employee ID (EMP0001, EMP0002, etc)."""
-        last_user = self.model.objects.order_by("-id").first()
-        if last_user and last_user.emp_id and last_user.emp_id.startswith("EMP"):
+    Responsibilities:
+    - Generate sequential emp_id (EMP0001, EMP0002, ...)
+      NOTE: This naive generator can suffer race conditions under heavy concurrency.
+      See migration notes below for a safer production approach (DB-backed sequence or locking table).
+    - Create users / superusers
+    """
+
+    def _generate_emp_id_candidate(self):
+        """
+        Generate next sequential Employee ID candidate based on highest numeric suffix seen.
+        This is *not* fully race-safe. If you expect concurrent user creation, use a DB sequence
+        or a separate counter table and use SELECT ... FOR UPDATE in a transaction.
+        """
+        last = self.model.objects.order_by("-id").only("emp_id").first()
+        if last and last.emp_id and last.emp_id.startswith("EMP"):
             try:
-                num = int(last_user.emp_id.replace("EMP", ""))
+                num = int(last.emp_id.replace("EMP", ""))
                 return f"EMP{num + 1:04d}"
-            except ValueError:
-                pass
+            except Exception:
+                logger.exception("Failed to parse last emp_id '%s'", last.emp_id)
         return "EMP0001"
 
-    def create_user(self, username=None, password=None, **extra_fields):
-        """Create and save a regular user."""
+    def generate_emp_id(self):
+        """
+        Public emp_id generator.
+
+        Keep in mind: high-concurrency environments can generate duplicates using this method.
+        If your deployment creates users concurrently (e.g., via API), replace this with:
+         - a DB sequence, or
+         - a dedicated counter model and use select_for_update inside a transaction.
+
+        Returns:
+            str: new emp_id like 'EMP0001'
+        """
+        return self._generate_emp_id_candidate()
+
+    def _create_user(self, username, password, **extra_fields):
+        """
+        Internal helper that actually constructs and saves the User instance.
+        """
         emp_id = extra_fields.get("emp_id") or self.generate_emp_id()
         username = username or emp_id
 
-        # Generate a random secure password if none provided
+        # Generate a secure random password if none provided
         if not password:
             password = get_random_string(
-                length=10,
-                allowed_chars="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
+                length=12,
+                allowed_chars="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+"
             )
 
         extra_fields["emp_id"] = emp_id
         user = self.model(username=username, **extra_fields)
         user.set_password(password)
 
-        # Default: No forced password change at first login
-        user.force_password_change = False
+        # Ensure defaults
+        if "is_active" not in extra_fields:
+            user.is_active = True
+        if "is_staff" not in extra_fields:
+            user.is_staff = extra_fields.get("is_staff", False)
+
         user.save(using=self._db)
 
-        # Log creation (development only)
-        log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs")
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, "user_log.txt")
-        with open(log_file, "a") as f:
-            f.write(
-                f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
-                f"emp_id={emp_id}, username={username}, email={extra_fields.get('email', 'N/A')}\n"
-            )
+        # Log creation for audit (use logger; avoid raw file I/O in model)
+        logger.info("User created: emp_id=%s username=%s email=%s", emp_id, username, extra_fields.get("email"))
 
-        print(f"\n✅ USER CREATED — emp_id={emp_id}, username={username}, temp_password={password}")
+        # Important: return the created user instance (password not returned)
         return user
 
-    def create_superuser(self, email, password=None, **extra_fields):
-        """Create and save a superuser (Admin)."""
+    def create_user(self, username=None, password=None, **extra_fields):
+        """
+        Public API to create a regular user.
+
+        Example:
+            User.objects.create_user(username='jdoe', password='secret', email='jdoe@example.com')
+        """
+        # Ensure required fields are present
+        extra_fields.setdefault("role", "Employee")
+        return self._create_user(username, password, **extra_fields)
+
+    def create_superuser(self, username=None, email=None, password=None, **extra_fields):
+        """
+        Create and save a superuser.
+
+        Django's `createsuperuser` management command will call this method, so ensure it accepts
+        `username`, `email` and `password`.
+        """
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
         extra_fields.setdefault("role", "Admin")
         extra_fields.setdefault("is_active", True)
-        return self.create_user(email=email, password=password, **extra_fields)
+
+        if not email:
+            raise ValueError("Superuser must have an email address.")
+        if not password:
+            raise ValueError("Superuser must have a password.")
+
+        # Use username if provided, else derive from email local-part
+        if not username:
+            username = email.split("@")[0]
+
+        return self._create_user(username, password, **extra_fields)
 
 
-# ===========================================================
+# -----------------------------------------------------------
 # USER MODEL
-# ===========================================================
+# -----------------------------------------------------------
 class User(AbstractBaseUser, PermissionsMixin):
-    """User model aligned for frontend and API testing."""
+    """
+    Custom User model.
+
+    Key characteristics:
+    - emp_id: unique, non-editable "EMP0001" style identifier (used as USERNAME_FIELD)
+    - username & email are separate and indexed
+    - role-based utility methods for permission checks
+    - account lockout logic (failed attempts -> temporary lock)
+    """
+
+    ROLE_ADMIN = "Admin"
+    ROLE_MANAGER = "Manager"
+    ROLE_EMPLOYEE = "Employee"
 
     ROLE_CHOICES = [
-        ("Admin", "Admin"),
-        ("Manager", "Manager"),
-        ("Employee", "Employee"),
+        (ROLE_ADMIN, "Admin"),
+        (ROLE_MANAGER, "Manager"),
+        (ROLE_EMPLOYEE, "Employee"),
     ]
 
+    STATUS_ACTIVE = "Active"
+    STATUS_INACTIVE = "Inactive"
     STATUS_CHOICES = [
-        ("Active", "Active"),
-        ("Inactive", "Inactive"),
+        (STATUS_ACTIVE, "Active"),
+        (STATUS_INACTIVE, "Inactive"),
     ]
 
-    # Core Info
-    emp_id = models.CharField(max_length=50, unique=True, editable=False)
+    # Core
+    emp_id = models.CharField(max_length=20, unique=True, editable=False)
     username = models.CharField(max_length=150, unique=True)
     email = models.EmailField(unique=True)
+
     first_name = models.CharField(max_length=100, blank=True)
     last_name = models.CharField(max_length=100, blank=True)
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="Employee")
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default=ROLE_EMPLOYEE)
 
-    # Contact Info
+    # Contact
     phone = models.CharField(
         max_length=15,
         null=True,
         blank=True,
         unique=True,
-        validators=[RegexValidator(r"^\+?\d{7,15}$", "Enter a valid phone number.")],
+        validators=[RegexValidator(r"^\+?\d{7,15}$", "Enter a valid phone number (7-15 digits, optional leading +).")],
     )
 
-    # Department (Soft link for dropdown)
+    # Soft link to department (optional)
     department = models.ForeignKey(
         "employee.Department",
         on_delete=models.SET_NULL,
@@ -115,90 +188,136 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     joining_date = models.DateField(default=timezone.now)
     is_verified = models.BooleanField(default=False)
-    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="Active")
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_ACTIVE)
 
-    # Security
+    # Security / lockout
     failed_login_attempts = models.PositiveIntegerField(default=0)
     account_locked = models.BooleanField(default=False)
     locked_at = models.DateTimeField(null=True, blank=True)
     force_password_change = models.BooleanField(default=False)
 
-    # Django Auth Flags
+    # Django auth flags
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
-    date_joined = models.DateTimeField(auto_now_add=True)
 
-    # Audit Fields
+    # Audit
+    date_joined = models.DateTimeField(auto_now_add=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     objects = UserManager()
 
+    # Use emp_id as the username field so external systems refer to stable identifier
     USERNAME_FIELD = "emp_id"
+    # Required fields when using createsuperuser (Django will prompt for these)
     REQUIRED_FIELDS = ["email", "username"]
 
     class Meta:
         verbose_name = "User"
         verbose_name_plural = "Users"
         ordering = ["emp_id"]
-        indexes = [models.Index(fields=["username", "email", "emp_id"])]
+        indexes = [
+            models.Index(fields=["username"]),
+            models.Index(fields=["email"]),
+            models.Index(fields=["emp_id"]),
+        ]
 
     def __str__(self):
         return f"{self.username} ({self.emp_id})"
 
     # ---------------------------------------------------
-    # ROLE HELPERS
+    # Clean / validation
+    # ---------------------------------------------------
+    def clean(self):
+        """
+        Additional model-level validation: basic sanity checks.
+        Raises ValidationError if data invalid.
+        """
+        errors = {}
+
+        # Email must be present
+        if not self.email:
+            errors["email"] = "Email is required."
+
+        # status must be a valid choice
+        if self.status not in dict(self.STATUS_CHOICES):
+            errors["status"] = "Invalid status."
+
+        # role must be valid
+        if self.role not in dict(self.ROLE_CHOICES):
+            errors["role"] = "Invalid role."
+
+        if errors:
+            raise ValidationError(errors)
+
+    # ---------------------------------------------------
+    # Role helper convenience methods
     # ---------------------------------------------------
     def is_admin(self):
-        return self.role == "Admin" or self.is_superuser
+        return self.role == self.ROLE_ADMIN or self.is_superuser
 
     def is_manager(self):
-        return self.role == "Manager"
+        return self.role == self.ROLE_MANAGER
 
     def is_employee(self):
-        return self.role == "Employee"
+        return self.role == self.ROLE_EMPLOYEE
 
     # ---------------------------------------------------
-    # ACCOUNT LOCKOUT LOGIC
+    # Account lockout logic
     # ---------------------------------------------------
+    LOCK_THRESHOLD = 5
+    LOCK_DURATION_HOURS = 2
+
     def lock_account(self):
-        """Lock account for 2 hours after failed login threshold."""
+        """Lock account for LOCK_DURATION_HOURS and deactivate login."""
         self.account_locked = True
         self.is_active = False
         self.locked_at = timezone.now()
+        # Save minimal fields
         self.save(update_fields=["account_locked", "is_active", "locked_at"])
+        logger.warning("Account locked for user %s at %s", self.emp_id, self.locked_at)
 
     def unlock_account(self):
-        """Unlock account manually or after 2 hours."""
+        """Unlock account and reset failed attempts."""
         self.account_locked = False
         self.is_active = True
         self.failed_login_attempts = 0
         self.locked_at = None
         self.save(update_fields=["account_locked", "is_active", "failed_login_attempts", "locked_at"])
+        logger.info("Account unlocked for user %s", self.emp_id)
 
     def increment_failed_attempts(self):
-        """Increase failed attempts and auto-lock if >= 5."""
+        """
+        Increase failed attempts and auto-lock if threshold reached.
+        If the account was already locked but lock duration is expired, auto-unlock and continue.
+        """
+        # Auto-unlock if lock expired
         if self.account_locked and self.locked_at:
-            if timezone.now() >= self.locked_at + timedelta(hours=2):
+            if timezone.now() >= self.locked_at + timezone.timedelta(hours=self.LOCK_DURATION_HOURS):
                 self.unlock_account()
 
-        self.failed_login_attempts += 1
-        if self.failed_login_attempts >= 5:
+        self.failed_login_attempts = (self.failed_login_attempts or 0) + 1
+        if self.failed_login_attempts >= self.LOCK_THRESHOLD:
             self.lock_account()
         else:
             self.save(update_fields=["failed_login_attempts"])
+        logger.debug("Failed attempts for %s = %s", self.emp_id, self.failed_login_attempts)
 
     def reset_login_attempts(self):
-        """Reset after successful login."""
-        if self.failed_login_attempts != 0:
+        """Reset failed login attempts after successful authentication."""
+        if self.failed_login_attempts:
             self.failed_login_attempts = 0
             self.save(update_fields=["failed_login_attempts"])
+            logger.debug("Reset failed login attempts for %s", self.emp_id)
 
     def lock_remaining_time(self):
-        """Return remaining lock time in hours/minutes (for frontend alert)."""
+        """
+        Return remaining lock time as dict {'hours': x, 'minutes': y} or None.
+        If lock expired this method will unlock the account and return None.
+        """
         if not self.account_locked or not self.locked_at:
             return None
-        remaining_seconds = (self.locked_at + timedelta(hours=2) - timezone.now()).total_seconds()
+        remaining_seconds = (self.locked_at + timezone.timedelta(hours=self.LOCK_DURATION_HOURS) - timezone.now()).total_seconds()
         if remaining_seconds <= 0:
             self.unlock_account()
             return None
@@ -207,8 +326,8 @@ class User(AbstractBaseUser, PermissionsMixin):
         return {"hours": hours, "minutes": minutes}
 
     def require_password_change(self):
-        """Check if user must change password on next login."""
-        return self.force_password_change
+        """Return True if the user must change password on next login."""
+        return bool(self.force_password_change)
 
 '''
 # ===========================================================
