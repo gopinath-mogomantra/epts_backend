@@ -5,7 +5,6 @@ from django.core.exceptions import ValidationError
 
 User = settings.AUTH_USER_MODEL
 
-
 # ===========================================================
 # ✅ Constants
 # ===========================================================
@@ -76,7 +75,9 @@ class BaseFeedback(models.Model):
     class Meta:
         abstract = True
         ordering = ["-created_at"]
-        index_together = [("employee", "department", "feedback_date")]
+        indexes = [
+            models.Index(fields=["employee", "department", "feedback_date"]),
+        ]
 
     # --------------------------------------------------------
     # ✅ Display & Utility

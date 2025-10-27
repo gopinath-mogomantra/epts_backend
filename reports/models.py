@@ -97,10 +97,8 @@ class CachedReport(models.Model):
             models.Index(fields=["month"]),
             models.Index(fields=["week_number"]),
             models.Index(fields=["report_type"]),
-        ]
-        index_together = [
-            ("report_type", "year", "week_number"),
-            ("report_type", "year", "month"),
+            models.Index(fields=["report_type", "year", "week_number"]),
+            models.Index(fields=["report_type", "year", "month"]),
         ]
 
     # -----------------------------------------------------------

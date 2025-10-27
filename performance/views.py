@@ -1,394 +1,370 @@
-# ===============================================
-# reports/views.py (Final — Optimized, Cached & Frontend-Aligned)
-# ===============================================
+# ===========================================================
+# performance/views.py  (Final Updated — Frontend & API Validation Ready)
+# ===========================================================
 
-from rest_framework.views import APIView
+from rest_framework import viewsets, permissions, status, filters
 from rest_framework.response import Response
-from rest_framework import permissions, status
-from django.db.models import Avg, F, Q, Window
+from rest_framework.views import APIView
+from django.db.models import Max, F, Avg, Window
 from django.db.models.functions import Rank
+from django.db import IntegrityError
 from django.utils import timezone
-from django.http import HttpResponse
-from datetime import timedelta, datetime
-from itertools import chain
-import csv
 import logging
 
-from employee.models import Employee
-from performance.models import PerformanceEvaluation
-from feedback.models import GeneralFeedback, ManagerFeedback, ClientFeedback
-from reports.models import CachedReport
-from reports.serializers import (
-    WeeklyReportSerializer,
-    MonthlyReportSerializer,
-    EmployeeHistorySerializer,
-    ManagerReportSerializer,
-    DepartmentReportSerializer,
+from .models import PerformanceEvaluation
+from .serializers import (
+    PerformanceEvaluationSerializer,
+    PerformanceCreateUpdateSerializer,
+    PerformanceDashboardSerializer,
 )
+from employee.models import Employee
+from notifications.models import Notification
 
 logger = logging.getLogger(__name__)
 
-
 # ===========================================================
-# 🧠 Helper: Compute Feedback Average
+# ✅ PERFORMANCE VIEWSET (CRUD + FILTERS)
 # ===========================================================
-def get_feedback_average(employee, start_date=None, end_date=None):
-    """Compute average rating across all feedback sources for a given employee."""
-    filters = Q(employee=employee)
-    if start_date and end_date:
-        filters &= Q(created_at__range=(start_date, end_date))
+class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
+    """
+    CRUD APIs for Performance Evaluations.
+    - Admin: Full Access
+    - Manager: Own Team
+    - Employee: Own Records
+    """
 
-    ratings = list(chain(
-        GeneralFeedback.objects.filter(filters).values_list("rating", flat=True),
-        ManagerFeedback.objects.filter(filters).values_list("rating", flat=True),
-        ClientFeedback.objects.filter(filters).values_list("rating", flat=True),
-    ))
-
-    return round(sum(ratings) / len(ratings), 2) if ratings else 0.0
-
-
-# ===========================================================
-# ✅ 1. WEEKLY CONSOLIDATED REPORT (Ranked)
-# ===========================================================
-class WeeklyReportView(APIView):
+    queryset = PerformanceEvaluation.objects.select_related(
+        "employee__user", "evaluator", "department"
+    )
     permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [filters.OrderingFilter]
+    ordering_fields = ["review_date", "total_score", "average_score"]
+    ordering = ["-review_date"]
 
-    def get(self, request):
-        """Return consolidated weekly performance summary (organization-wide ranked)."""
-        week = int(request.query_params.get("week", timezone.now().isocalendar()[1]))
-        year = int(request.query_params.get("year", timezone.now().year))
-        save_cache = request.query_params.get("save_cache", "false").lower() == "true"
-        dept_filter = request.query_params.get("dept_code")
+    def get_serializer_class(self):
+        if self.action in ["create", "update", "partial_update"]:
+            return PerformanceCreateUpdateSerializer
+        return PerformanceEvaluationSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        role = getattr(user, "role", "").lower()
+        qs = super().get_queryset()
+
+        if role == "manager":
+            return qs.filter(employee__manager__user=user)
+        elif role == "employee":
+            return qs.filter(employee__user=user)
+        return qs
+
+    # --------------------------------------------------------
+    # ✅ CREATE — Frontend Safe & Validation Friendly
+    # --------------------------------------------------------
+    def create(self, request, *args, **kwargs):
+        role = getattr(request.user, "role", "").lower()
+        if role not in ["admin", "manager"]:
+            return Response(
+                {"error": "Only Admin or Manager can create evaluations."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = self.get_serializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
 
         try:
-            qs = PerformanceEvaluation.objects.filter(week_number=week, year=year)
-            if dept_filter:
-                qs = qs.filter(department__code__iexact=dept_filter)
+            instance = serializer.save()
+        except IntegrityError:
+            return Response(
+                {"error": "A performance record already exists for this week and evaluator."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as exc:
+            logger.exception("Error saving performance evaluation: %s", exc)
+            return Response(
+                {"error": "Something went wrong while saving the evaluation."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
-            qs = (
-                qs.select_related("employee__user", "department")
-                .annotate(
-                    emp_id=F("employee__user__emp_id"),
-                    department_name=F("department__name"),
-                    computed_rank=Window(
-                        expression=Rank(),
-                        order_by=F("total_score").desc()
+        # Notification (safe execution)
+        try:
+            Notification.objects.create(
+                employee=instance.employee.user,
+                message=f"Your weekly performance for {instance.evaluation_period} has been published.",
+                auto_delete=True,
+            )
+        except Exception as e:
+            logger.warning("⚠️ Notification failed: %s", e)
+
+        return Response(
+            {
+                "message": "✅ Performance evaluation recorded successfully.",
+                "evaluation": {
+                    "employee": {
+                        "emp_id": instance.employee.user.emp_id,
+                        "name": f"{instance.employee.user.first_name} {instance.employee.user.last_name}".strip(),
+                    },
+                    "department": (
+                        {"code": instance.department.code, "name": instance.department.name}
+                        if instance.department else None
                     ),
-                )
-                .order_by("computed_rank")
-            )
-
-            if not qs.exists():
-                return Response(
-                    {"message": f"No performance data found for Week {week}, {year}."},
-                    status=status.HTTP_200_OK,
-                )
-
-            feedback_map = {
-                emp.id: get_feedback_average(emp)
-                for emp in Employee.objects.filter(id__in=qs.values_list("employee_id", flat=True))
-            }
-
-            result = [
-                {
-                    "emp_id": p.employee.user.emp_id,
-                    "employee_full_name": f"{p.employee.user.first_name} {p.employee.user.last_name}".strip(),
-                    "department": p.department.name if p.department else "-",
-                    "total_score": p.total_score,
-                    "average_score": p.average_score,
-                    "feedback_avg": feedback_map.get(p.employee.id, 0.0),
-                    "week_number": week,
-                    "year": year,
-                    "rank": getattr(p, "computed_rank", None),
-                    "remarks": p.remarks or "",
-                }
-                for p in qs
-            ]
-
-            if save_cache:
-                CachedReport.objects.create(
-                    report_type="weekly",
-                    year=year,
-                    week_number=week,
-                    payload={"records": result},
-                    generated_by=request.user,
-                )
-
-            return Response(
-                {
-                    "evaluation_period": f"Week {week}, {year}",
-                    "total_records": len(result),
-                    "records": WeeklyReportSerializer(result, many=True).data,
+                    "evaluator": (
+                        {
+                            "emp_id": instance.evaluator.emp_id,
+                            "name": f"{instance.evaluator.first_name} {instance.evaluator.last_name}".strip(),
+                        }
+                        if instance.evaluator else None
+                    ),
+                    "evaluation_type": instance.evaluation_type,
+                    "total_score": instance.total_score,
+                    "average_score": instance.average_score,
+                    "remarks": instance.remarks,
+                    "evaluation_period": instance.evaluation_period,
                 },
-                status=status.HTTP_200_OK,
-            )
-
-        except Exception as e:
-            logger.exception("❌ WeeklyReport Error: %s", e)
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-# ===========================================================
-# ✅ 2. MONTHLY CONSOLIDATED REPORT
-# ===========================================================
-class MonthlyReportView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get(self, request):
-        """Return monthly average performance summary."""
-        month = int(request.query_params.get("month", timezone.now().month))
-        year = int(request.query_params.get("year", timezone.now().year))
-        save_cache = request.query_params.get("save_cache", "false").lower() == "true"
-
-        try:
-            perf_qs = PerformanceEvaluation.objects.filter(
-                review_date__month=month, year=year
-            ).select_related("employee__user", "department")
-
-            if not perf_qs.exists():
-                return Response(
-                    {"message": f"No performance data found for {month}/{year}."},
-                    status=status.HTTP_200_OK,
-                )
-
-            data = []
-            employees = Employee.objects.filter(id__in=perf_qs.values_list("employee_id", flat=True))
-
-            for emp in employees.select_related("user", "department"):
-                emp_perfs = perf_qs.filter(employee=emp)
-                if not emp_perfs.exists():
-                    continue
-
-                avg_score = round(emp_perfs.aggregate(avg=Avg("average_score"))["avg"], 2)
-                best_week_obj = emp_perfs.order_by("-average_score").first()
-
-                fb_avg = get_feedback_average(
-                    emp,
-                    start_date=best_week_obj.created_at - timedelta(days=30),
-                    end_date=best_week_obj.created_at,
-                )
-
-                data.append({
-                    "emp_id": emp.user.emp_id,
-                    "employee_full_name": f"{emp.user.first_name} {emp.user.last_name}".strip(),
-                    "department": emp.department.name if emp.department else "-",
-                    "month": month,
-                    "year": year,
-                    "avg_score": avg_score,
-                    "feedback_avg": fb_avg,
-                    "best_week": best_week_obj.week_number,
-                    "best_week_score": best_week_obj.average_score,
-                })
-
-            if save_cache:
-                CachedReport.objects.create(
-                    report_type="monthly",
-                    year=year,
-                    month=month,
-                    payload={"records": data},
-                    generated_by=request.user,
-                )
-
-            return Response(
-                {
-                    "evaluation_period": f"Month {month}, {year}",
-                    "total_records": len(data),
-                    "records": MonthlyReportSerializer(data, many=True).data,
-                },
-                status=status.HTTP_200_OK,
-            )
-
-        except Exception as e:
-            logger.exception("❌ MonthlyReport Error: %s", e)
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-# ===========================================================
-# ✅ 3. MANAGER-WISE REPORT
-# ===========================================================
-class ManagerReportView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get(self, request):
-        """Return weekly report for employees under a specific manager."""
-        manager_name = request.query_params.get("manager_name")
-        week = int(request.query_params.get("week", timezone.now().isocalendar()[1]))
-        year = int(request.query_params.get("year", timezone.now().year))
-
-        if not manager_name:
-            return Response({"error": "Please provide manager_name."}, status=status.HTTP_400_BAD_REQUEST)
-
-        employees = Employee.objects.filter(manager__user__first_name__iexact=manager_name)
-        if not employees.exists():
-            return Response(
-                {"message": f"No employees found under manager '{manager_name}'."},
-                status=status.HTTP_200_OK,
-            )
-
-        qs = (
-            PerformanceEvaluation.objects.filter(employee__in=employees, week_number=week, year=year)
-            .select_related("employee__user", "department")
-            .annotate(
-                computed_rank=Window(
-                    expression=Rank(),
-                    order_by=F("total_score").desc()
-                )
-            )
-            .order_by("computed_rank")
-        )
-
-        if not qs.exists():
-            return Response(
-                {"message": f"No data found for manager {manager_name} in Week {week}, {year}."},
-                status=status.HTTP_200_OK,
-            )
-
-        records = []
-        for p in qs:
-            emp = p.employee
-            records.append({
-                "manager_full_name": manager_name,
-                "emp_id": emp.user.emp_id,
-                "employee_full_name": f"{emp.user.first_name} {emp.user.last_name}".strip(),
-                "department": p.department.name if p.department else "-",
-                "total_score": p.total_score,
-                "average_score": p.average_score,
-                "feedback_avg": get_feedback_average(emp),
-                "week_number": week,
-                "year": year,
-                "rank": getattr(p, "computed_rank", None),
-                "remarks": p.remarks or "",
-            })
-
-        return Response(
-            {"evaluation_period": f"Week {week}, {year}", "records": ManagerReportSerializer(records, many=True).data},
-            status=status.HTTP_200_OK,
+            },
+            status=status.HTTP_201_CREATED,
         )
 
 
 # ===========================================================
-# ✅ 4. DEPARTMENT-WISE REPORT
+# ✅ GET PERFORMANCE RECORDS BY EMPLOYEE ID (With Rank)
 # ===========================================================
-class DepartmentReportView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+class EmployeePerformanceByIdView(APIView):
+    """
+    Returns all performance evaluations for a specific employee.
+    Supports optional week/year filters.
+    Example:
+      GET /api/performance/evaluations/EMP0028/
+      GET /api/performance/evaluations/EMP0028/?week=43&year=2025
+    """
 
-    def get(self, request):
-        """Return ranked weekly report for a department."""
-        dept_name = request.query_params.get("department_name")
-        week = int(request.query_params.get("week", timezone.now().isocalendar()[1]))
-        year = int(request.query_params.get("year", timezone.now().year))
-
-        if not dept_name:
-            return Response({"error": "Please provide department_name."}, status=status.HTTP_400_BAD_REQUEST)
-
-        employees = Employee.objects.filter(department__name__iexact=dept_name)
-        qs = (
-            PerformanceEvaluation.objects.filter(employee__in=employees, week_number=week, year=year)
-            .select_related("employee__user", "employee__manager__user", "department")
-            .annotate(
-                computed_rank=Window(
-                    expression=Rank(),
-                    order_by=F("total_score").desc()
-                )
-            )
-            .order_by("computed_rank")
-        )
-
-        if not qs.exists():
-            return Response(
-                {"message": f"No data found for department {dept_name} in Week {week}, {year}."},
-                status=status.HTTP_200_OK,
-            )
-
-        data = []
-        for p in qs:
-            emp = p.employee
-            mgr = f"{emp.manager.user.first_name} {emp.manager.user.last_name}".strip() if emp.manager else "-"
-            data.append({
-                "department_name": dept_name,
-                "emp_id": emp.user.emp_id,
-                "employee_full_name": f"{emp.user.first_name} {emp.user.last_name}".strip(),
-                "manager_full_name": mgr,
-                "total_score": p.total_score,
-                "average_score": p.average_score,
-                "feedback_avg": get_feedback_average(emp),
-                "week_number": week,
-                "year": year,
-                "rank": getattr(p, "computed_rank", None),
-                "remarks": p.remarks or "",
-            })
-
-        return Response(
-            {"evaluation_period": f"Week {week}, {year}", "records": DepartmentReportSerializer(data, many=True).data},
-            status=status.HTTP_200_OK,
-        )
-
-
-# ===========================================================
-# ✅ 5. EMPLOYEE PERFORMANCE HISTORY
-# ===========================================================
-class EmployeeHistoryView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, emp_id):
-        """Return weekly trend history for a specific employee."""
+        role = getattr(request.user, "role", "").lower()
+
+        if role not in ["admin", "manager", "employee"]:
+            return Response({"error": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+
         try:
-            employee = Employee.objects.select_related("user").get(user__emp_id=emp_id)
+            emp = Employee.objects.select_related("user", "department").get(user__emp_id=emp_id)
         except Employee.DoesNotExist:
-            return Response({"error": "Employee not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"error": f"Employee '{emp_id}' not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        qs = PerformanceEvaluation.objects.filter(employee=employee).order_by("year", "week_number")
+        if role == "employee" and request.user.emp_id != emp_id:
+            return Response(
+                {"error": "Employees can only view their own performance data."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        qs = PerformanceEvaluation.objects.filter(employee__department=emp.department).select_related(
+            "employee__user", "department"
+        )
+
+        week = request.query_params.get("week")
+        year = request.query_params.get("year")
+        if week:
+            qs = qs.filter(week_number=week)
+        if year:
+            qs = qs.filter(year=year)
+
         if not qs.exists():
-            return Response({"message": "No performance history found."}, status=status.HTTP_200_OK)
+            return Response(
+                {"message": f"No performance data found for employee {emp_id}."},
+                status=status.HTTP_200_OK,
+            )
 
-        result = [
-            {
-                "week_number": p.week_number,
-                "year": p.year,
-                "average_score": p.average_score,
-                "feedback_avg": get_feedback_average(employee, start_date=p.created_at - timedelta(days=7), end_date=p.created_at),
-                "remarks": p.remarks,
-                "rank": p.rank,
-            }
-            for p in qs
-        ]
+        ranked_qs = qs.annotate(
+            computed_rank=Window(expression=Rank(), order_by=F("total_score").desc())
+        ).order_by("-total_score")
+
+        emp_qs = ranked_qs.filter(employee=emp)
+        serializer = PerformanceEvaluationSerializer(emp_qs, many=True)
+        data = serializer.data
+
+        for i, record in enumerate(emp_qs):
+            data[i]["rank"] = getattr(record, "computed_rank", None)
 
         return Response(
-            {"employee": employee.user.emp_id, "records": EmployeeHistorySerializer(result, many=True).data},
+            {
+                "employee": {
+                    "emp_id": emp.user.emp_id,
+                    "name": f"{emp.user.first_name} {emp.user.last_name}".strip(),
+                    "department": emp.department.name if emp.department else "-",
+                },
+                "record_count": emp_qs.count(),
+                "evaluations": data,
+            },
             status=status.HTTP_200_OK,
         )
 
 
 # ===========================================================
-# ✅ 6. EXPORT WEEKLY REPORT AS CSV
+# ✅ PERFORMANCE SUMMARY (Admin / Manager Dashboard)
 # ===========================================================
-class ExportWeeklyCSVView(APIView):
+class PerformanceSummaryView(APIView):
+    """
+    Provides weekly department summary and leaderboard.
+    Query Params:
+      ?include_rankings=true
+      ?top_n=10
+    """
+
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        """Export weekly report as a downloadable CSV file."""
-        week = int(request.query_params.get("week", timezone.now().isocalendar()[1]))
-        year = int(request.query_params.get("year", timezone.now().year))
+        user = request.user
+        role = getattr(user, "role", "").lower()
+        if role not in ["admin", "manager"]:
+            return Response({"error": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
 
-        qs = PerformanceEvaluation.objects.filter(week_number=week, year=year).select_related("employee__user", "department")
+        latest_year = PerformanceEvaluation.objects.aggregate(max_year=Max("year"))["max_year"]
+        if not latest_year:
+            return Response({"message": "No performance data yet."}, status=status.HTTP_200_OK)
+
+        latest_week = (
+            PerformanceEvaluation.objects.filter(year=latest_year)
+            .aggregate(max_week=Max("week_number"))["max_week"]
+        )
+        if not latest_week:
+            return Response({"message": "No weekly data found."}, status=status.HTTP_200_OK)
+
+        qs = PerformanceEvaluation.objects.filter(year=latest_year, week_number=latest_week).select_related(
+            "employee__user", "department"
+        )
+
+        dept_avg = (
+            qs.values("department__id", "department__name")
+            .annotate(avg_score=Avg("average_score"))
+            .order_by("-avg_score")
+        )
+
+        summary = []
+        for dept in dept_avg:
+            dname = dept["department__name"] or "N/A"
+            avg_score = round(dept["avg_score"] or 0, 2)
+            top_emp = (
+                qs.filter(department__name=dname)
+                .order_by("-total_score")
+                .select_related("employee__user")
+                .first()
+            )
+            summary.append({
+                "department": dname,
+                "average_score": avg_score,
+                "top_performer": (
+                    f"{top_emp.employee.user.first_name} {top_emp.employee.user.last_name}".strip()
+                    if top_emp else "-"
+                ),
+            })
+
+        response = {
+            "evaluation_period": f"Week {latest_week}, {latest_year}",
+            "overall_avg_score": round(qs.aggregate(Avg("average_score"))["average_score__avg"] or 0, 2),
+            "department_summary": summary,
+        }
+
+        if request.query_params.get("include_rankings", "false").lower() == "true":
+            ranked_qs = qs.annotate(
+                rank_position=Window(expression=Rank(), order_by=F("total_score").desc())
+            ).order_by("rank_position")
+
+            top_n = int(request.query_params.get("top_n", 10))
+            leaderboard = []
+            for r in ranked_qs[:top_n]:
+                u = r.employee.user
+                leaderboard.append({
+                    "rank": getattr(r, "rank_position", None),
+                    "emp_id": u.emp_id,
+                    "name": f"{u.first_name} {u.last_name}".strip(),
+                    "department": r.department.name if r.department else None,
+                    "average_score": r.average_score,
+                })
+
+            response["leaderboard"] = leaderboard
+
+        return Response(response, status=status.HTTP_200_OK)
+
+
+# ===========================================================
+# ✅ EMPLOYEE DASHBOARD (Self Performance Summary)
+# ===========================================================
+class EmployeeDashboardView(APIView):
+    """Displays logged-in employee’s personal performance trend."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        try:
+            employee = Employee.objects.select_related("user").get(user=user)
+        except Employee.DoesNotExist:
+            return Response({"error": "Employee profile not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        records = PerformanceEvaluation.objects.filter(employee=employee).order_by("-review_date")
+        if not records.exists():
+            return Response({"message": "No performance data found."}, status=status.HTTP_200_OK)
+
+        avg_score = round(records.aggregate(Avg("average_score"))["average_score__avg"] or 0, 2)
+        best = records.order_by("-total_score").first()
+        serializer = PerformanceDashboardSerializer(records, many=True)
+
+        return Response(
+            {
+                "employee": {
+                    "emp_id": user.emp_id,
+                    "name": f"{user.first_name} {user.last_name}".strip(),
+                },
+                "overall_average": avg_score,
+                "best_week": {
+                    "evaluation_period": best.evaluation_period,
+                    "average_score": best.average_score,
+                },
+                "trend_data": list(records.values("week_number", "average_score").order_by("week_number")),
+                "evaluations": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+# ===========================================================
+# ✅ ADMIN / MANAGER: VIEW EMPLOYEE PERFORMANCE
+# ===========================================================
+class EmployeePerformanceView(APIView):
+    """View all or specific evaluations for a given employee."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, emp_id):
+        role = getattr(request.user, "role", "").lower()
+        if role not in ["admin", "manager"]:
+            return Response(
+                {"error": "Only Admin or Manager can view this data."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            emp = Employee.objects.select_related("user", "department", "manager__user").get(user__emp_id=emp_id)
+        except Employee.DoesNotExist:
+            return Response({"error": f"Employee '{emp_id}' not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        qs = PerformanceEvaluation.objects.filter(employee=emp).order_by("-review_date")
+        period = request.query_params.get("evaluation_period")
+        if period:
+            qs = qs.filter(evaluation_period__iexact=period)
+
         if not qs.exists():
-            return Response({"message": "No data found for CSV export."}, status=status.HTTP_200_OK)
+            return Response({"message": "No records found."}, status=status.HTTP_200_OK)
 
-        filename = f"Weekly_Report_Week{week}_{year}_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
-        response = HttpResponse(content_type="text/csv")
-        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        serializer = PerformanceEvaluationSerializer(qs, many=True)
+        header = {
+            "emp_id": emp.user.emp_id,
+            "employee_name": f"{emp.user.first_name} {emp.user.last_name}".strip(),
+            "department": emp.department.name if emp.department else None,
+            "manager": (
+                f"{emp.manager.user.first_name} {emp.manager.user.last_name}".strip()
+                if emp.manager else None
+            ),
+            "available_weeks": list(qs.values_list("evaluation_period", flat=True)),
+        }
 
-        writer = csv.writer(response)
-        writer.writerow(["Emp ID", "Employee Name", "Department", "Total Score", "Average Score", "Rank"])
-
-        for p in qs.order_by("-total_score"):
-            writer.writerow([
-                p.employee.user.emp_id,
-                f"{p.employee.user.first_name} {p.employee.user.last_name}".strip(),
-                p.department.name if p.department else "-",
-                p.total_score,
-                p.average_score,
-                p.rank or "-",
-            ])
-
-        return response
+        return Response({"header": header, "evaluations": serializer.data}, status=status.HTTP_200_OK)
