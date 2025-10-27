@@ -1,5 +1,5 @@
 # ===========================================================
-# performance/views.py  (Frontend Integration & API Validation Ready)
+# performance/views.py  (Final Updated — Frontend & API Validation Ready)
 # ===========================================================
 
 from rest_framework import viewsets, permissions, status, filters
@@ -122,6 +122,74 @@ class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
                 },
             },
             status=status.HTTP_201_CREATED,
+        )
+
+
+# ===========================================================
+# ✅ GET PERFORMANCE RECORDS BY EMPLOYEE ID
+# ===========================================================
+class EmployeePerformanceByIdView(APIView):
+    """
+    Returns all performance evaluations for a specific employee.
+    Supports optional week/year filters.
+    Example:
+      GET /api/performance/evaluations/EMP0028/
+      GET /api/performance/evaluations/EMP0028/?week=43&year=2025
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, emp_id):
+        role = getattr(request.user, "role", "").lower()
+
+        # Allow Admin, Manager, or the Employee themself
+        if role not in ["admin", "manager", "employee"]:
+            return Response(
+                {"error": "Access denied."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # 🔍 Employee lookup
+        try:
+            emp = Employee.objects.select_related("user", "department").get(user__emp_id=emp_id)
+        except Employee.DoesNotExist:
+            return Response({"error": f"Employee '{emp_id}' not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # 🔐 Employee role restriction (can only see self)
+        if role == "employee" and request.user.emp_id != emp_id:
+            return Response(
+                {"error": "Employees can only view their own performance data."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # 🔍 Filter evaluations
+        qs = PerformanceEvaluation.objects.filter(employee=emp).order_by("-review_date")
+        week = request.query_params.get("week")
+        year = request.query_params.get("year")
+        if week:
+            qs = qs.filter(week_number=week)
+        if year:
+            qs = qs.filter(year=year)
+
+        if not qs.exists():
+            return Response(
+                {"message": f"No performance data found for employee {emp_id}."},
+                status=status.HTTP_200_OK,
+            )
+
+        serializer = PerformanceEvaluationSerializer(qs, many=True)
+
+        return Response(
+            {
+                "employee": {
+                    "emp_id": emp.user.emp_id,
+                    "name": f"{emp.user.first_name} {emp.user.last_name}".strip(),
+                    "department": emp.department.name if emp.department else "-",
+                },
+                "record_count": qs.count(),
+                "evaluations": serializer.data,
+            },
+            status=status.HTTP_200_OK,
         )
 
 
