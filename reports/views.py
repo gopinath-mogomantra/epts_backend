@@ -245,7 +245,7 @@ class ManagerReportView(APIView):
 
 
 # ===========================================================
-# ✅ 4. DEPARTMENT-WISE REPORT
+# ✅ 4. DEPARTMENT-WISE REPORT (Updated — Rank + Manager Fallback Fixed)
 # ===========================================================
 class DepartmentReportView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -257,12 +257,21 @@ class DepartmentReportView(APIView):
         year = int(request.query_params.get("year", timezone.now().year))
 
         if not dept_name:
-            return Response({"error": "Please provide department_name."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Please provide department_name."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         employees = Employee.objects.filter(department__name__iexact=dept_name)
-        perf_qs = PerformanceEvaluation.objects.filter(
-            employee__in=employees, week_number=week, year=year
-        ).select_related("employee__user", "department", "manager__user")
+        perf_qs = (
+            PerformanceEvaluation.objects.filter(
+                employee__in=employees, week_number=week, year=year
+            )
+            .select_related("employee__user", "employee__manager__user", "department")
+            .annotate(
+                computed_rank=Window(expression=Rank(), order_by=F("total_score").desc())
+            )
+        )
 
         if not perf_qs.exists():
             return Response(
@@ -273,26 +282,40 @@ class DepartmentReportView(APIView):
         data = []
         for p in perf_qs:
             emp = p.employee
-            manager_full = (
-                f"{emp.manager.user.first_name} {emp.manager.user.last_name}".strip()
-                if emp.manager else "-"
-            )
+
+            # ✅ Manager fallback: if manager missing, find department manager
+            if emp.manager and hasattr(emp.manager, "user"):
+                manager_full = f"{emp.manager.user.first_name} {emp.manager.user.last_name}".strip()
+            else:
+                dept_manager = Employee.objects.filter(
+                    department=emp.department,
+                    role__name__iexact="Manager"
+                ).first()
+                manager_full = (
+                    f"{dept_manager.user.first_name} {dept_manager.user.last_name}".strip()
+                    if dept_manager and hasattr(dept_manager, "user")
+                    else "Not Assigned"
+                )
+
             data.append({
                 "department_name": dept_name,
                 "emp_id": emp.user.emp_id,
                 "employee_full_name": f"{emp.user.first_name} {emp.user.last_name}".strip(),
                 "manager_full_name": manager_full,
-                "total_score": p.total_score,
-                "average_score": p.average_score,
+                "total_score": p.total_score or 0.0,
+                "average_score": p.average_score or 0.0,
                 "feedback_avg": get_feedback_average(emp),
                 "week_number": week,
                 "year": year,
-                "rank": p.rank,
-                "remarks": p.remarks,
+                "rank": int(p.computed_rank) if p.computed_rank else None,
+                "remarks": p.remarks or "No remarks provided",
             })
 
         return Response(
-            {"evaluation_period": f"Week {week}, {year}", "records": DepartmentReportSerializer(data, many=True).data},
+            {
+                "evaluation_period": f"Week {week}, {year}",
+                "records": DepartmentReportSerializer(data, many=True).data,
+            },
             status=status.HTTP_200_OK,
         )
 

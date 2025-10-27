@@ -39,14 +39,12 @@ class RefreshTokenView(TokenRefreshView):
 
 
 # ===========================================================
-# ✅ 3. REGISTER USER (Admin Only — Single + Bulk Create)
+# ✅ 3. REGISTER USER (Admin Only) — Hybrid with Auto Employee Creation
 # ===========================================================
+from employee.models import Employee, Department  # ⬅️ Add this import at top
+
 class RegisterView(generics.CreateAPIView):
-    """
-    Allows Admins/Superusers to register:
-    - Single user → POST single JSON object
-    - Multiple users → POST JSON array
-    """
+    """Allows Admins/Superusers to register new users (auto-creates Employee record)."""
     queryset = User.objects.all()
     serializer_class = RegisterSerializer
     permission_classes = [IsAuthenticated]
@@ -59,46 +57,40 @@ class RegisterView(generics.CreateAPIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        data = request.data
-        many = isinstance(data, list)
-        serializer = self.get_serializer(data=data, many=many)
+        serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        new_users = serializer.save()
+        new_user = serializer.save()
 
-        # ✅ Set joining_date automatically if missing
-        if many:
-            for user in new_users:
-                if not getattr(user, "joining_date", None):
-                    user.joining_date = timezone.now().date()
-                    user.save(update_fields=["joining_date"])
-        else:
-            if not getattr(new_users, "joining_date", None):
-                new_users.joining_date = timezone.now().date()
-                new_users.save(update_fields=["joining_date"])
+        # Ensure joining date exists
+        if not getattr(new_user, "joining_date", None):
+            new_user.joining_date = timezone.now().date()
+            new_user.save(update_fields=["joining_date"])
 
-        # ✅ Build response
-        if many:
-            users_data = [
-                {
-                    "emp_id": user.emp_id,
-                    "username": user.username,
-                    "email": user.email,
-                    "temp_password": getattr(user, "temp_password", None),
-                }
-                for user in new_users
-            ]
-            return Response(
-                {"message": f"{len(new_users)} users created successfully!", "users": users_data},
-                status=status.HTTP_201_CREATED,
-            )
-        else:
-            return Response(
-                {
-                    "message": "✅ User registered successfully!",
-                    "user": ProfileSerializer(new_users).data,
-                },
-                status=status.HTTP_201_CREATED,
-            )
+        # ✅ Hybrid approach: create Employee record if not already linked
+        try:
+            if not hasattr(new_user, "employee"):
+                department = None
+                dept_id = serializer.validated_data.get("department")
+                if dept_id:
+                    department = Department.objects.filter(id=dept_id).first()
+
+                Employee.objects.create(
+                    user=new_user,
+                    emp_id=new_user.emp_id,
+                    department=department,
+                    status=new_user.status,
+                    joining_date=new_user.joining_date
+                )
+        except Exception as e:
+            print(f"⚠️ Employee auto-create failed: {e}")
+
+        return Response(
+            {
+                "message": "✅ User registered successfully!",
+                "user": ProfileSerializer(new_user).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 # ===========================================================

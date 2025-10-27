@@ -72,7 +72,7 @@ class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         try:
-            instance = serializer.save(evaluator=request.user)
+            instance = serializer.save()
         except IntegrityError:
             return Response(
                 {"error": "A performance record already exists for this week and evaluator."},
