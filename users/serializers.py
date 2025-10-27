@@ -1,33 +1,27 @@
 # ===========================================================
-# users/serializers.py (Production-Ready, Validated, API-Aligned)
+# users/serializers.py (Final — Department Flexible, Stable)
 # ===========================================================
 
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import authenticate, get_user_model
 from django.db import transaction
-from django.utils import timezone
-from django.core.validators import RegexValidator
 import random
 import string
 import logging
+
+from employee.models import Department
 
 User = get_user_model()
 logger = logging.getLogger("users")
 
 
 # ===========================================================
-# ✅ LOGIN SERIALIZER (Custom JWT + Lockout Handling)
+# ✅ LOGIN SERIALIZER (Custom JWT)
 # ===========================================================
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
     Handles login via emp_id or username.
-
-    Features:
-    - Login by emp_id or username
-    - Account lockout after 5 failed attempts
-    - Password-change enforcement
-    - JWT token generation
     """
 
     username_field = "username"
@@ -37,7 +31,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         password = attrs.get("password")
 
         user = None
-        # Lookup by emp_id or username
+        # Login via emp_id or username
         if User.objects.filter(emp_id__iexact=login_input).exists():
             user = User.objects.get(emp_id__iexact=login_input)
         elif User.objects.filter(username__iexact=login_input).exists():
@@ -46,13 +40,12 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         if not user:
             raise serializers.ValidationError({"detail": "Invalid credentials."})
 
-        # Account locked?
+        # Check account lock
         if user.account_locked:
             remaining = user.lock_remaining_time()
             if remaining:
-                h, m = remaining["hours"], remaining["minutes"]
                 raise serializers.ValidationError(
-                    {"detail": f"Account locked. Try again after {h}h {m}m."}
+                    {"detail": f"Account locked. Try again after {remaining['hours']}h {remaining['minutes']}m."}
                 )
             else:
                 user.unlock_account()
@@ -61,26 +54,23 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         authenticated_user = authenticate(username=user.emp_id, password=password)
         if not authenticated_user:
             user.increment_failed_attempts()
-            remaining = max(0, user.LOCK_THRESHOLD - user.failed_login_attempts)
             if user.account_locked:
                 raise serializers.ValidationError(
                     {"detail": f"Too many failed attempts. Account locked for {user.LOCK_DURATION_HOURS} hours."}
                 )
-            raise serializers.ValidationError(
-                {"detail": f"Invalid credentials. {remaining} attempt(s) left."}
-            )
+            remaining = max(0, user.LOCK_THRESHOLD - user.failed_login_attempts)
+            raise serializers.ValidationError({"detail": f"Invalid credentials. {remaining} attempt(s) left."})
 
-        # Successful login
         user.reset_login_attempts()
 
-        # Check if password change is required
+        # Force password change check
         if getattr(user, "force_password_change", False):
             raise serializers.ValidationError({
                 "force_password_change": True,
                 "detail": "Password change required before login."
             })
 
-        # Proceed with JWT generation
+        # JWT token
         data = super().validate({"username": user.emp_id, "password": password})
         data["user"] = {
             "id": user.id,
@@ -99,12 +89,15 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 
 # ===========================================================
-# ✅ REGISTER SERIALIZER (Atomic Create + Secure Temp Password)
+# ✅ REGISTER SERIALIZER (Flexible Department)
 # ===========================================================
 class RegisterSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField(read_only=True)
     department_name = serializers.CharField(source="department.name", read_only=True)
     temp_password = serializers.CharField(read_only=True)
+
+    # Department now accepts ID, code, or name
+    department = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     class Meta:
         model = User
@@ -150,9 +143,6 @@ class RegisterSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
-        """
-        Only Admin or Manager can create users.
-        """
         request = self.context.get("request")
         if request and hasattr(request, "user"):
             if not request.user.is_admin() and not request.user.is_manager():
@@ -161,46 +151,54 @@ class RegisterSerializer(serializers.ModelSerializer):
                 )
         return attrs
 
+    # =======================================================
+    # ✅ CREATE USER (Atomic + Flexible Dept)
+    # =======================================================
     @transaction.atomic
     def create(self, validated_data):
-        """
-        Create user with auto-generated emp_id and temporary password.
-        """
-        # Generate next emp_id safely
+        dept_value = validated_data.pop("department", None)
+        department_instance = None
+
+        # Resolve department (id/code/name)
+        if dept_value:
+            if str(dept_value).isdigit():
+                department_instance = Department.objects.filter(id=int(dept_value)).first()
+            if not department_instance:
+                department_instance = Department.objects.filter(code__iexact=dept_value).first()
+            if not department_instance:
+                department_instance = Department.objects.filter(name__iexact=dept_value).first()
+            if not department_instance:
+                raise serializers.ValidationError({"department": f"No department found matching '{dept_value}'."})
+
+        # Auto-generate emp_id
         last_user = User.objects.select_for_update().order_by("-id").first()
-        last_num = 0
-        if last_user and last_user.emp_id and last_user.emp_id.startswith("EMP"):
-            try:
-                last_num = int(last_user.emp_id.replace("EMP", ""))
-            except ValueError:
-                last_num = 0
+        last_num = int(last_user.emp_id.replace("EMP", "")) if last_user and last_user.emp_id else 0
         new_emp_id = f"EMP{last_num + 1:04d}"
 
-        # Generate secure temporary password
+        # Temporary password
         first_name = validated_data.get("first_name", "User").capitalize()
         random_part = "".join(random.choices(string.ascii_letters + string.digits, k=4))
         temp_password = f"{first_name}@{random_part}"
 
+        # Create user
         user = User.objects.create_user(
             emp_id=new_emp_id,
             password=temp_password,
+            department=department_instance,
             **validated_data,
         )
         user.force_password_change = True
         user.save(update_fields=["force_password_change"])
 
-        logger.info(
-            "Temp password created for %s (%s) → %s",
-            user.emp_id, user.email, temp_password,
-        )
-
-        # attach temp password for response
+        logger.info("✅ User %s registered with temp password %s", user.emp_id, temp_password)
         user.temp_password = temp_password
         return user
 
     def to_representation(self, instance):
         rep = super().to_representation(instance)
         rep["temp_password"] = getattr(instance, "temp_password", None)
+        if instance.department:
+            rep["department"] = instance.department.code or instance.department.name
         return rep
 
 
@@ -212,9 +210,7 @@ class ChangePasswordSerializer(serializers.Serializer):
     new_password = serializers.CharField(write_only=True, required=True)
 
     def validate_new_password(self, value):
-        """
-        Enforce strong password policy: at least 8 chars, 1 upper, 1 lower, 1 digit, 1 symbol.
-        """
+        """Strong password policy"""
         import re
         if len(value) < 8:
             raise serializers.ValidationError("Password must be at least 8 characters long.")
@@ -244,7 +240,7 @@ class ChangePasswordSerializer(serializers.Serializer):
 
 
 # ===========================================================
-# ✅ PROFILE SERIALIZER (Self-Profile or Admin View)
+# ✅ PROFILE SERIALIZER
 # ===========================================================
 class ProfileSerializer(serializers.ModelSerializer):
     department_name = serializers.CharField(source="department.name", read_only=True)

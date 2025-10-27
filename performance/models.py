@@ -1,3 +1,6 @@
+# ===========================================================
+# performance/models.py  (Final Updated — Auto-Ranking Ready)
+# ===========================================================
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
@@ -168,10 +171,10 @@ class PerformanceEvaluation(models.Model):
         return total
 
     # -------------------------------------------------------
-    # Rank Calculation (for automation or API endpoint)
+    # Rank Calculation (Manual trigger if needed)
     # -------------------------------------------------------
     def calculate_rank(self):
-        """Compute rank within the same department/week."""
+        """Compute rank within the same department/week manually."""
         evaluations = PerformanceEvaluation.objects.filter(
             department=self.department,
             week_number=self.week_number,
@@ -183,6 +186,24 @@ class PerformanceEvaluation(models.Model):
             eval_obj.rank = index
             eval_obj.save(update_fields=["rank"])
         return self.rank
+
+    # -------------------------------------------------------
+    # Auto-Ranking Helper (Used by Signals)
+    # -------------------------------------------------------
+    def auto_rank_trigger(self):
+        """Trigger ranking recalculation for this record’s department/week."""
+        if not self.department:
+            return
+        evaluations = PerformanceEvaluation.objects.filter(
+            department=self.department,
+            week_number=self.week_number,
+            year=self.year,
+        ).order_by("-average_score", "employee__user__first_name")
+
+        for i, record in enumerate(evaluations, start=1):
+            if record.rank != i:
+                record.rank = i
+                record.save(update_fields=["rank"])
 
     # -------------------------------------------------------
     # Helpers
@@ -224,11 +245,23 @@ class PerformanceEvaluation(models.Model):
         """Auto-calculate total, average, and readable period before saving."""
         self.calculate_total_score()
 
+        # ✅ Department fallback (if not manually set)
+        if not self.department and self.employee and self.employee.department:
+            self.department = self.employee.department
+
+        # ✅ Auto-generate readable evaluation period
         if not self.evaluation_period:
             start, end = get_week_range(self.review_date)
-            self.evaluation_period = f"Week {self.week_number} ({start.strftime('%d %b')} - {end.strftime('%d %b %Y')})"
+            self.evaluation_period = (
+                f"Week {self.week_number} ({start.strftime('%d %b')} - {end.strftime('%d %b %Y')})"
+            )
 
         super().save(*args, **kwargs)
+
+        # Debug log (for console testing)
+        print(
+            f"[Auto-Rank] Saved {self.employee.user.emp_id} | Avg: {self.average_score} | Dept: {self.department.code if self.department else '-'}"
+        )
 
     # -------------------------------------------------------
     # String Representation

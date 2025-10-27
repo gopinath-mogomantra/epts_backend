@@ -1,7 +1,9 @@
+# ===========================================================
+# performance/serializers.py (Final Updated — Auto-Ranking Ready)
+# ===========================================================
 from rest_framework import serializers
 from django.utils import timezone
 from django.contrib.auth import get_user_model
-from django.db.models import Q
 from .models import PerformanceEvaluation
 from employee.models import Department, Employee
 
@@ -62,6 +64,7 @@ class PerformanceEvaluationSerializer(serializers.ModelSerializer):
     metrics_breakdown = serializers.SerializerMethodField()
     score_display = serializers.SerializerMethodField()
     week_label = serializers.SerializerMethodField()
+    score_category = serializers.SerializerMethodField()
 
     class Meta:
         model = PerformanceEvaluation
@@ -70,7 +73,8 @@ class PerformanceEvaluationSerializer(serializers.ModelSerializer):
             "evaluation_type", "review_date", "evaluation_period",
             "week_number", "year", "week_label",
             "metrics_breakdown", "total_score", "average_score",
-            "rank", "score_display", "remarks", "created_at", "updated_at",
+            "rank", "score_display", "score_category",
+            "remarks", "created_at", "updated_at",
         ]
 
     def get_metrics_breakdown(self, obj):
@@ -99,16 +103,32 @@ class PerformanceEvaluationSerializer(serializers.ModelSerializer):
     def get_week_label(self, obj):
         return f"Week {obj.week_number}, {obj.year}"
 
+    def get_score_category(self, obj):
+        """Categorize performance for analytics display."""
+        score = obj.average_score
+        if score >= 90:
+            return "Excellent"
+        elif score >= 80:
+            return "Good"
+        elif score >= 70:
+            return "Average"
+        elif score >= 60:
+            return "Below Average"
+        else:
+            return "Poor"
+
     def to_representation(self, instance):
-        """Ensure uniform response even if some fields are null."""
         rep = super().to_representation(instance)
         rep["department_name"] = getattr(instance.department, "name", None)
-        rep["employee_name"] = f"{instance.employee.user.first_name} {instance.employee.user.last_name}".strip() if instance.employee and instance.employee.user else None
+        rep["employee_name"] = (
+            f"{instance.employee.user.first_name} {instance.employee.user.last_name}".strip()
+            if instance.employee and instance.employee.user else None
+        )
         return rep
 
 
 # ===========================================================
-# ✅ CREATE / UPDATE SERIALIZER (emp_id + dept_code)
+# ✅ CREATE / UPDATE SERIALIZER
 # ===========================================================
 class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
     employee_emp_id = serializers.CharField(write_only=True)
@@ -127,9 +147,7 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
             "punctuality", "remarks",
         ]
 
-    # --------------------------------------------------------
-    # Field-Level Validations
-    # --------------------------------------------------------
+    # ---------------------- Validations ----------------------
     def validate_employee_emp_id(self, value):
         try:
             emp = Employee.objects.select_related("user", "department").get(user__emp_id__iexact=value)
@@ -139,7 +157,6 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
         return value
 
     def validate_evaluator_emp_id(self, value):
-        """Optional evaluator lookup."""
         if not value:
             return value
         try:
@@ -150,7 +167,6 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
         return value
 
     def validate_department_code(self, value):
-        """Optional department code validation."""
         if not value:
             return value
         try:
@@ -160,9 +176,6 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
         self.context["department"] = dept
         return value
 
-    # --------------------------------------------------------
-    # Global Validation
-    # --------------------------------------------------------
     def validate(self, attrs):
         emp = self.context.get("employee")
         review_date = attrs.get("review_date", timezone.now().date())
@@ -181,52 +194,47 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
                 f"Evaluation already exists for {emp.user.emp_id} (Week {week_number}, {year}, {evaluation_type})."
             )
 
-        # Metric sanity check (0–100)
+        # Metric validation
         for field, value in attrs.items():
-            if field in PerformanceEvaluation._meta.fields_map:
-                continue
             if isinstance(value, int) and not (0 <= value <= 100):
                 raise serializers.ValidationError({field: "Metric scores must be between 0 and 100."})
 
-        # Role restriction
         request = self.context.get("request")
         if request and hasattr(request.user, "role"):
             if request.user.role not in ["Admin", "Manager"]:
                 raise serializers.ValidationError({"role": "Only Admin or Manager can submit evaluations."})
-
         return attrs
 
-    # --------------------------------------------------------
-    # CREATE
-    # --------------------------------------------------------
+    # ---------------------- Create ----------------------
     def create(self, validated_data):
         emp = self.context.get("employee")
         evaluator = self.context.get("evaluator", None)
         department = self.context.get("department", emp.department if emp else None)
 
-        # Auto-assign evaluator from logged-in user if not passed
         request = self.context.get("request")
         if not evaluator and request:
             evaluator = request.user
 
-        # Clean unwanted fields
         for f in ["employee_emp_id", "evaluator_emp_id", "department_code"]:
             validated_data.pop(f, None)
 
-        return PerformanceEvaluation.objects.create(
+        instance = PerformanceEvaluation.objects.create(
             employee=emp,
             evaluator=evaluator,
             department=department,
             **validated_data,
         )
 
-    # --------------------------------------------------------
-    # UPDATE
-    # --------------------------------------------------------
+        # ✅ Trigger rank update for the department/week
+        instance.auto_rank_trigger()
+        return instance
+
+    # ---------------------- Update ----------------------
     def update(self, instance, validated_data):
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
+        instance.auto_rank_trigger()
         return instance
 
 
@@ -239,6 +247,7 @@ class PerformanceDashboardSerializer(serializers.ModelSerializer):
     manager_name = serializers.SerializerMethodField()
     department_name = serializers.CharField(source="department.name", read_only=True)
     score_display = serializers.SerializerMethodField()
+    score_category = serializers.SerializerMethodField()
 
     class Meta:
         model = PerformanceEvaluation
@@ -246,7 +255,7 @@ class PerformanceDashboardSerializer(serializers.ModelSerializer):
             "id", "emp_id", "employee_full_name", "manager_name",
             "department_name", "review_date", "evaluation_period",
             "evaluation_type", "total_score", "average_score",
-            "rank", "score_display", "remarks",
+            "rank", "score_display", "score_category", "remarks",
         ]
 
     def get_emp_id(self, obj):
@@ -265,6 +274,19 @@ class PerformanceDashboardSerializer(serializers.ModelSerializer):
     def get_score_display(self, obj):
         return f"{obj.total_score} / 1500 ({obj.average_score}%)"
 
+    def get_score_category(self, obj):
+        score = obj.average_score
+        if score >= 90:
+            return "Excellent"
+        elif score >= 80:
+            return "Good"
+        elif score >= 70:
+            return "Average"
+        elif score >= 60:
+            return "Below Average"
+        else:
+            return "Poor"
+
 
 # ===========================================================
 # ✅ PERFORMANCE RANK SERIALIZER (Top 3 / Weak 3)
@@ -273,11 +295,15 @@ class PerformanceRankSerializer(serializers.ModelSerializer):
     emp_id = serializers.ReadOnlyField(source="employee.user.emp_id")
     full_name = serializers.SerializerMethodField()
     department_name = serializers.ReadOnlyField(source="department.name")
+    score_display = serializers.SerializerMethodField()
 
     class Meta:
         model = PerformanceEvaluation
-        fields = ["emp_id", "full_name", "department_name", "average_score", "rank"]
+        fields = ["emp_id", "full_name", "department_name", "average_score", "rank", "score_display"]
 
     def get_full_name(self, obj):
         u = obj.employee.user
         return f"{u.first_name} {u.last_name}".strip()
+
+    def get_score_display(self, obj):
+        return f"{obj.total_score} / 1500 ({obj.average_score}%)"

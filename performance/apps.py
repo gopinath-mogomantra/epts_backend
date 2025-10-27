@@ -1,19 +1,19 @@
 # ===============================================
-# performance/apps.py (Final Verified Version)
+# performance/apps.py (Fixed — 2025-10-27)
 # ===============================================
-# Defines the configuration class for the 'performance' app.
-# Django automatically detects and loads it when added to
-# INSTALLED_APPS in settings.py.
-# ===============================================
-
 from django.apps import AppConfig
 
-
 class PerformanceConfig(AppConfig):
-    """
-    AppConfig for the 'performance' module.
-    Helps Django identify and initialize the app.
-    """
-    default_auto_field = "django.db.models.BigAutoField"
-    name = "performance"
-    verbose_name = "Employee Performance Management"
+    default_auto_field = 'django.db.models.BigAutoField'
+    name = 'performance'
+    verbose_name = 'Performance Evaluations'
+
+    def ready(self):
+        """
+        Import signal handlers or scheduled tasks here safely.
+        Avoid direct model imports at the top level!
+        """
+        try:
+            import performance.signals  # ✅ only if you have signals
+        except ImportError:
+            pass
