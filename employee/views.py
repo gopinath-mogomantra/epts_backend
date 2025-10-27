@@ -277,3 +277,39 @@ class EmployeeViewSet(viewsets.ModelViewSet):
             },
             "departments": dept_summary,
         }, status=status.HTTP_200_OK)
+
+
+# ===========================================================
+# ✅ EMPLOYEE BULK CSV UPLOAD API
+# ===========================================================
+from rest_framework.views import APIView
+from .serializers import EmployeeCSVUploadSerializer
+
+
+class EmployeeCSVUploadView(APIView):
+    """
+    Upload and process a CSV file to bulk-create employees.
+    Only Admins can use this endpoint.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        # Role-based access control
+        if not (request.user.is_superuser or getattr(request.user, "role", "") == "Admin"):
+            return Response(
+                {"error": "Only Admins can upload employee CSV files."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        serializer = EmployeeCSVUploadSerializer(data=request.data)
+        if serializer.is_valid():
+            result = serializer.save()
+            return Response(
+                {
+                    "message": "✅ Employee CSV processed successfully.",
+                    "uploaded_count": result["success_count"],
+                    "errors": result["errors"],
+                },
+                status=status.HTTP_201_CREATED,
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

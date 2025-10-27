@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from .models import Department, Employee
-import re
+import re, csv, io
 
 User = get_user_model()
 
@@ -272,3 +272,94 @@ class EmployeeDashboardSerializer(serializers.ModelSerializer):
 
     def get_full_name(self, obj):
         return f"{obj.user.first_name or ''} {obj.user.last_name or ''}".strip() or obj.user.username
+
+
+
+# ===========================================================
+# ✅ EMPLOYEE BULK CSV UPLOAD SERIALIZER
+# ===========================================================
+import csv, io
+
+class EmployeeCSVUploadSerializer(serializers.Serializer):
+    file = serializers.FileField()
+
+    def validate_file(self, value):
+        if not value.name.endswith(".csv"):
+            raise serializers.ValidationError("Only CSV files are allowed.")
+        return value
+
+    def create(self, validated_data):
+        file = validated_data["file"]
+        decoded_file = file.read().decode("utf-8")
+        io_string = io.StringIO(decoded_file)
+        reader = csv.DictReader(io_string)
+
+        required_columns = [
+            "Emp Id", "First Name", "Last Name",
+            "Email", "Dept Code", "Role", "Joining Date"
+        ]
+        if not all(col in reader.fieldnames for col in required_columns):
+            raise serializers.ValidationError(
+                {"error": f"CSV must contain headers: {', '.join(required_columns)}"}
+            )
+
+        success_count, errors = 0, []
+
+        with transaction.atomic():
+            for i, row in enumerate(reader, start=2):  # start=2 to skip header row
+                emp_id = row.get("Emp Id", "").strip()
+                first_name = row.get("First Name", "").strip()
+                last_name = row.get("Last Name", "").strip()
+                email = row.get("Email", "").strip()
+                dept_code = row.get("Dept Code", "").strip()
+                role = row.get("Role", "").strip().capitalize()
+                joining_date = row.get("Joining Date", "").strip()
+
+                # Basic validations
+                if not (emp_id and first_name and email and dept_code and role):
+                    errors.append(f"Row {i}: Missing mandatory fields.")
+                    continue
+
+                if Employee.objects.filter(user__emp_id__iexact=emp_id).exists():
+                    errors.append(f"Row {i}: Employee ID '{emp_id}' already exists.")
+                    continue
+
+                if User.objects.filter(email__iexact=email).exists():
+                    errors.append(f"Row {i}: Email '{email}' already exists.")
+                    continue
+
+                department = Department.objects.filter(code__iexact=dept_code).first()
+                if not department:
+                    errors.append(f"Row {i}: Department code '{dept_code}' not found.")
+                    continue
+
+                if role not in ["Admin", "Manager", "Employee"]:
+                    errors.append(f"Row {i}: Invalid role '{role}'.")
+                    continue
+
+                try:
+                    # Create user
+                    user = User.objects.create_user(
+                        email=email,
+                        first_name=first_name,
+                        last_name=last_name,
+                        role=role,
+                    )
+                    user.emp_id = emp_id  # if your User model has emp_id field
+                    user.set_password("default123")
+                    user.save()
+
+                    # Create employee
+                    Employee.objects.create(
+                        user=user,
+                        department=department,
+                        joining_date=joining_date or None,
+                        status="Active",
+                        is_active=True,
+                    )
+                    success_count += 1
+
+                except Exception as e:
+                    errors.append(f"Row {i}: {str(e)}")
+
+        return {"success_count": success_count, "errors": errors}

@@ -3,7 +3,7 @@
 # ===========================================================
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import DepartmentViewSet, EmployeeViewSet
+from .views import DepartmentViewSet, EmployeeViewSet, EmployeeCSVUploadView
 
 app_name = "employee"
 
@@ -12,6 +12,7 @@ Auto-registers all CRUD API endpoints for:
 -------------------------------------------------------------
 🔹 /api/employees/departments/  → Department CRUD (Admin only)
 🔹 /api/employees/employees/    → Employee CRUD (Admin/Manager only)
+🔹 /api/employees/upload_csv/   → Bulk employee upload (Admin only)
 -------------------------------------------------------------
 Each ViewSet supports standard REST actions:
   - GET (list, retrieve)
@@ -20,7 +21,7 @@ Each ViewSet supports standard REST actions:
   - DELETE (soft delete / deactivate for departments)
   - Custom routes:
       - /employees/team/<manager_emp_id>/
-      - /employees/team/<manager_emp_id>/overview/
+      - /employees/summary/
 """
 
 # -----------------------------------------------------------
@@ -35,4 +36,7 @@ router.register(r"employees", EmployeeViewSet, basename="employees")
 # -----------------------------------------------------------
 urlpatterns = [
     path("", include(router.urls)),
+
+    # ✅ CSV Bulk Upload Endpoint (Admin only)
+    path("upload_csv/", EmployeeCSVUploadView.as_view(), name="employee-csv-upload"),
 ]
