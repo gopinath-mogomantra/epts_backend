@@ -1,3 +1,7 @@
+# ===========================================================
+# employee/models.py (Final — Frontend & Business Logic Aligned)
+# ===========================================================
+
 from django.db import models
 from django.utils import timezone
 from django.conf import settings
@@ -5,6 +9,9 @@ from django.core.validators import RegexValidator
 from django.core.exceptions import ValidationError
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+import logging
+
+logger = logging.getLogger("employee")
 
 User = settings.AUTH_USER_MODEL
 
@@ -23,7 +30,7 @@ class Department(models.Model):
         unique=True,
         blank=True,
         null=True,
-        help_text="Optional short code (e.g., HR01, IT02).",
+        help_text="Short department code (e.g., HR01, ENG02).",
     )
     name = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True, null=True)
@@ -38,7 +45,7 @@ class Department(models.Model):
         verbose_name_plural = "Departments"
 
     def __str__(self):
-        return self.name
+        return self.display_name
 
     @property
     def display_name(self):
@@ -46,14 +53,16 @@ class Department(models.Model):
         return f"{self.name} ({self.code})" if self.code else self.name
 
     def deactivate(self):
-        """Soft deactivate a department (used by Admin panel)."""
+        """Soft deactivate a department."""
         self.is_active = False
         self.save(update_fields=["is_active", "updated_at"])
+        logger.info(f"Department '{self.name}' deactivated.")
 
     def activate(self):
-        """Re-activate a previously inactive department."""
+        """Re-activate a department."""
         self.is_active = True
         self.save(update_fields=["is_active", "updated_at"])
+        logger.info(f"Department '{self.name}' reactivated.")
 
 
 # ===========================================================
@@ -61,7 +70,7 @@ class Department(models.Model):
 # ===========================================================
 class Employee(models.Model):
     """
-    Represents an employee linked to a user account.
+    Represents an employee linked to a User account.
     Includes department, manager, role, and contact info.
     """
 
@@ -117,10 +126,11 @@ class Employee(models.Model):
         max_length=100,
         blank=True,
         null=True,
-        help_text="Job title or position (e.g., Developer, Analyst).",
+        help_text="Job title (e.g., Developer, Analyst).",
     )
 
-    contact_number = models.CharField(
+    # Frontend field name consistency: 'phone'
+    phone = models.CharField(
         max_length=20,
         unique=True,
         blank=True,
@@ -131,7 +141,7 @@ class Employee(models.Model):
                 "Enter a valid Indian mobile number with +91 prefix.",
             )
         ],
-        help_text="Employee contact number.",
+        help_text="Employee phone number.",
     )
 
     status = models.CharField(
@@ -141,18 +151,12 @@ class Employee(models.Model):
         help_text="Current employment status.",
     )
 
-    is_active = models.BooleanField(
-        default=True,
-        help_text="Marks whether employee is currently active in the system.",
-    )
+    is_active = models.BooleanField(default=True)
 
     joining_date = models.DateField(default=timezone.now)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    # -------------------------------------------------------
-    # Meta Info
-    # -------------------------------------------------------
     class Meta:
         verbose_name = "Employee"
         verbose_name_plural = "Employees"
@@ -163,11 +167,8 @@ class Employee(models.Model):
             models.Index(fields=["status"]),
         ]
 
-    # -------------------------------------------------------
-    # String Representation
-    # -------------------------------------------------------
     def __str__(self):
-        """Readable employee name with emp_id for admin tables."""
+        """Readable employee name with emp_id."""
         if hasattr(self, "user") and self.user:
             full_name = f"{self.user.first_name} {self.user.last_name}".strip() or self.user.username
             emp_id = getattr(self.user, "emp_id", "N/A")
@@ -175,45 +176,38 @@ class Employee(models.Model):
         return "Unassigned Employee"
 
     # -------------------------------------------------------
-    # Validation
+    # VALIDATION
     # -------------------------------------------------------
     def clean(self):
-        """
-        Prevent invalid manager assignments:
-        - Employee cannot be their own manager.
-        - Manager must have role='Manager' or 'Admin'.
-        """
+        """Validate manager and department consistency."""
         if self.manager and self.manager_id == self.id:
             raise ValidationError("An employee cannot be their own manager.")
         if self.manager and getattr(self.manager.user, "role", None) not in ["Manager", "Admin"]:
             raise ValidationError("Assigned manager must have a Manager or Admin role.")
+        if self.role == "Employee" and not self.department:
+            raise ValidationError("Employee must belong to a department.")
 
     # -------------------------------------------------------
-    # Computed Fields (Frontend Usage)
+    # PROPERTIES
     # -------------------------------------------------------
     @property
     def emp_id(self):
-        """Shortcut to get emp_id from linked User."""
         return getattr(self.user, "emp_id", None)
 
     @property
     def email(self):
-        """Shortcut to get email from linked User."""
         return getattr(self.user, "email", None)
 
     @property
     def user_role(self):
-        """Shortcut to get role from linked User."""
         return getattr(self.user, "role", None)
 
     @property
     def department_name(self):
-        """Return department name for frontend display."""
         return getattr(self.department, "name", "-")
 
     @property
     def manager_name(self):
-        """Return manager's full name for frontend tables."""
         if self.manager and hasattr(self.manager, "user"):
             mgr_user = self.manager.user
             full_name = f"{mgr_user.first_name} {mgr_user.last_name}".strip()
@@ -222,64 +216,62 @@ class Employee(models.Model):
 
     @property
     def reporting_to_name(self):
-        """Alias for manager_name for frontend display consistency."""
         return self.manager_name
 
     @property
     def team_size(self):
-        """Return number of direct team members reporting to this employee."""
         return self.team_members.filter(is_active=True).count()
 
     # -------------------------------------------------------
-    # Activation / Deactivation Utilities
+    # ACTIVATION / DEACTIVATION
     # -------------------------------------------------------
     def deactivate(self):
-        """Soft deactivate employee (status = Inactive, is_active=False)."""
+        """Soft deactivate employee."""
         self.status = "Inactive"
         self.is_active = False
         self.save(update_fields=["status", "is_active", "updated_at"])
+        logger.warning(f"Employee {self.emp_id} deactivated.")
 
     def activate(self):
-        """Re-activate a previously inactive employee."""
+        """Re-activate employee."""
         self.status = "Active"
         self.is_active = True
         self.save(update_fields=["status", "is_active", "updated_at"])
+        logger.info(f"Employee {self.emp_id} reactivated.")
 
     # -------------------------------------------------------
-    # Query Helpers (For Manager & HR Views)
+    # QUERY HELPERS
     # -------------------------------------------------------
     @classmethod
     def active_employees(cls):
-        """Return queryset of all active employees."""
         return cls.objects.filter(is_active=True, status="Active")
 
     @classmethod
     def get_by_department(cls, dept_name):
-        """Filter employees by department name."""
         return cls.objects.filter(department__name__iexact=dept_name, is_active=True)
 
     @classmethod
     def get_team_members(cls, manager):
-        """Return all team members under a manager."""
         return cls.objects.filter(manager=manager, is_active=True)
 
 
 # ===========================================================
-# ✅ SIGNALS — Auto Create Employee on User Creation
+# ✅ SIGNAL — Auto Create Employee on User Creation
 # ===========================================================
 @receiver(post_save, sender=settings.AUTH_USER_MODEL)
 def auto_create_employee_profile(sender, instance, created, **kwargs):
-    """
-    Automatically create an Employee profile when a new User is created,
-    if the role is not Admin (Admin users are excluded).
-    """
-    if created and getattr(instance, "role", None) in ["Manager", "Employee"]:
-        from employee.models import Employee  # Local import to avoid circular dependency
-        if not hasattr(instance, "employee_profile"):
-            Employee.objects.create(
-                user=instance,
-                department=instance.department if hasattr(instance, "department") else None,
-                role=instance.role,
-                status="Active",
-                joining_date=getattr(instance, "joining_date", timezone.now().date()),
-            )
+    """Auto-create Employee profile when User is created."""
+    try:
+        if created and getattr(instance, "role", None) in ["Manager", "Employee"]:
+            from employee.models import Employee
+            if not hasattr(instance, "employee_profile"):
+                Employee.objects.create(
+                    user=instance,
+                    department=getattr(instance, "department", None),
+                    role=instance.role,
+                    status="Active",
+                    joining_date=getattr(instance, "joining_date", timezone.now().date()),
+                )
+                logger.info(f"Employee profile auto-created for {instance.emp_id}.")
+    except Exception as e:
+        logger.warning(f"Auto-create employee failed for {instance.emp_id}: {e}")

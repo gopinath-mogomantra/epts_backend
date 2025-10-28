@@ -1,20 +1,28 @@
+# ===========================================================
+# employee/views.py (Final — Frontend & Business Logic Aligned)
+# ===========================================================
+
 from rest_framework import viewsets, status, permissions, filters
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound
+from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from django.contrib.auth import get_user_model
 from rest_framework.pagination import PageNumberPagination
 from django.db import models, transaction
+import logging
 
 from .models import Department, Employee
 from .serializers import (
     DepartmentSerializer,
     EmployeeSerializer,
     EmployeeCreateUpdateSerializer,
+    EmployeeCSVUploadSerializer,
 )
 
 User = get_user_model()
+logger = logging.getLogger("employee")
 
 
 # ===========================================================
@@ -51,11 +59,13 @@ class DepartmentViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         if not (request.user.is_superuser or getattr(request.user, "role", "") == "Admin"):
             return Response({"error": "Only Admins can create departments."}, status=status.HTTP_403_FORBIDDEN)
+        logger.info(f"Department created by {request.user.emp_id}")
         return super().create(request, *args, **kwargs)
 
     def update(self, request, *args, **kwargs):
         if not (request.user.is_superuser or getattr(request.user, "role", "") == "Admin"):
             return Response({"error": "Only Admins can update departments."}, status=status.HTTP_403_FORBIDDEN)
+        logger.info(f"Department updated by {request.user.emp_id}")
         return super().update(request, *args, **kwargs)
 
     def destroy(self, request, *args, **kwargs):
@@ -67,6 +77,7 @@ class DepartmentViewSet(viewsets.ModelViewSet):
         force_delete = request.query_params.get("force", "").lower() == "true"
         if force_delete:
             instance.delete()
+            logger.warning(f"Department {instance.name} permanently deleted by {request.user.emp_id}")
             return Response({"message": f"🗑️ Department '{instance.name}' permanently deleted."}, status=status.HTTP_204_NO_CONTENT)
 
         if instance.employees.filter(is_active=True).exists():
@@ -74,6 +85,7 @@ class DepartmentViewSet(viewsets.ModelViewSet):
 
         instance.is_active = False
         instance.save(update_fields=["is_active"])
+        logger.info(f"Department {instance.name} deactivated by {request.user.emp_id}")
         return Response({"message": f"✅ Department '{instance.name}' deactivated successfully."}, status=status.HTTP_200_OK)
 
 
@@ -90,21 +102,15 @@ class EmployeeViewSet(viewsets.ModelViewSet):
     filterset_fields = ["department", "manager", "status", "is_active"]
     search_fields = [
         "user__first_name", "user__last_name", "user__emp_id",
-        "designation", "contact_number", "department__name"
+        "designation", "phone", "department__name"
     ]
     ordering_fields = ["joining_date", "user__first_name", "user__emp_id"]
 
-    # --------------------------------------------------------
-    # Serializer Switching
-    # --------------------------------------------------------
     def get_serializer_class(self):
         if self.action in ["create", "update", "partial_update"]:
             return EmployeeCreateUpdateSerializer
         return EmployeeSerializer
 
-    # --------------------------------------------------------
-    # Role-Based Query Filtering
-    # --------------------------------------------------------
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()
@@ -114,9 +120,6 @@ class EmployeeViewSet(viewsets.ModelViewSet):
             return qs.filter(user=user)
         return qs
 
-    # --------------------------------------------------------
-    # Object Fetching
-    # --------------------------------------------------------
     def get_object(self):
         emp_id = self.kwargs.get("emp_id")
         try:
@@ -124,17 +127,15 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         except Employee.DoesNotExist:
             raise NotFound(detail=f"Employee with emp_id '{emp_id}' not found.")
 
-    # --------------------------------------------------------
-    # CREATE EMPLOYEE
-    # --------------------------------------------------------
     @transaction.atomic
     def create(self, request, *args, **kwargs):
         if not (request.user.is_superuser or getattr(request.user, "role", "") in ["Admin", "Manager"]):
             return Response({"error": "You do not have permission to create employees."}, status=status.HTTP_403_FORBIDDEN)
 
-        serializer = self.get_serializer(data=request.data)
+        serializer = self.get_serializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         employee = serializer.save()
+        logger.info(f"Employee {employee.emp_id} created by {request.user.emp_id}")
 
         return Response(
             {
@@ -144,9 +145,6 @@ class EmployeeViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED,
         )
 
-    # --------------------------------------------------------
-    # UPDATE EMPLOYEE
-    # --------------------------------------------------------
     @transaction.atomic
     def update(self, request, *args, **kwargs):
         employee = self.get_object()
@@ -155,9 +153,10 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         if getattr(user, "role", "") == "Manager" and employee.manager and employee.manager.user != user:
             return Response({"error": "Managers can update only their own team members."}, status=status.HTTP_403_FORBIDDEN)
 
-        serializer = self.get_serializer(employee, data=request.data, partial=True)
+        serializer = self.get_serializer(employee, data=request.data, partial=True, context={"request": request})
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        logger.info(f"Employee {employee.emp_id} updated by {user.emp_id}")
 
         return Response(
             {
@@ -167,9 +166,6 @@ class EmployeeViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK,
         )
 
-    # --------------------------------------------------------
-    # DELETE EMPLOYEE (Soft Delete)
-    # --------------------------------------------------------
     def destroy(self, request, *args, **kwargs):
         employee = self.get_object()
         user = request.user
@@ -179,10 +175,10 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         if not (user.is_superuser or getattr(user, "role", "") in ["Admin", "Manager"]):
             return Response({"error": "You do not have permission to delete employees."}, status=status.HTTP_403_FORBIDDEN)
 
-        # Soft delete
         employee.deactivate()
         employee.user.is_active = False
         employee.user.save(update_fields=["is_active"])
+        logger.warning(f"Employee {employee.emp_id} deactivated by {user.emp_id}")
 
         return Response(
             {"message": f"🟡 Employee '{employee.user.emp_id}' deactivated successfully."},
@@ -221,7 +217,6 @@ class EmployeeViewSet(viewsets.ModelViewSet):
 
         paginator = DefaultPagination()
         paginated_team = paginator.paginate_queryset(team, request)
-
         team_data = [
             {
                 "emp_id": e.user.emp_id,
@@ -282,28 +277,18 @@ class EmployeeViewSet(viewsets.ModelViewSet):
 # ===========================================================
 # ✅ EMPLOYEE BULK CSV UPLOAD API
 # ===========================================================
-from rest_framework.views import APIView
-from .serializers import EmployeeCSVUploadSerializer
-
-
 class EmployeeCSVUploadView(APIView):
-    """
-    Upload and process a CSV file to bulk-create employees.
-    Only Admins can use this endpoint.
-    """
+    """Upload and process a CSV file to bulk-create employees."""
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
-        # Role-based access control
         if not (request.user.is_superuser or getattr(request.user, "role", "") == "Admin"):
-            return Response(
-                {"error": "Only Admins can upload employee CSV files."},
-                status=status.HTTP_403_FORBIDDEN
-            )
+            return Response({"error": "Only Admins can upload employee CSV files."}, status=status.HTTP_403_FORBIDDEN)
 
         serializer = EmployeeCSVUploadSerializer(data=request.data)
         if serializer.is_valid():
             result = serializer.save()
+            logger.info(f"CSV upload processed by {request.user.emp_id}")
             return Response(
                 {
                     "message": "✅ Employee CSV processed successfully.",
