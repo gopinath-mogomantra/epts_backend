@@ -1,10 +1,11 @@
 # ===========================================================
-# employee/serializers.py (Final — Frontend & Business Logic Aligned)
+# employee/serializers.py ✅ Final Fixed & Frontend-Aligned
+# Employee Performance Tracking System (EPTS)
 # ===========================================================
 
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from django.db import transaction
+from django.db import transaction, models
 from .models import Department, Employee
 import re, csv, io
 
@@ -104,7 +105,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
 
 
 # ===========================================================
-# ✅ EMPLOYEE CREATE / UPDATE SERIALIZER
+# ✅ EMPLOYEE CREATE / UPDATE SERIALIZER (Fixed)
 # ===========================================================
 class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(write_only=True)
@@ -140,6 +141,9 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Invalid role. Choose Admin, Manager, or Employee.")
         return value
 
+    # =======================================================
+    # ✅ CREATE
+    # =======================================================
     @transaction.atomic
     def create(self, validated_data):
         department_code = validated_data.pop("department_code", None)
@@ -149,16 +153,22 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
         last_name = validated_data.pop("last_name")
         role = validated_data.pop("role")
 
-        # Validate department
+        # --- Department validation ---
         department = None
+        if role == "Employee" and not department_code:
+            raise serializers.ValidationError({"department_code": "Department is required for Employee role."})
         if department_code:
-            department = Department.objects.filter(code__iexact=department_code).first()
+            department = Department.objects.filter(
+                models.Q(id__iexact=department_code)
+                | models.Q(code__iexact=department_code)
+                | models.Q(name__iexact=department_code)
+            ).first()
             if not department:
                 raise serializers.ValidationError({"department_code": f"Department '{department_code}' not found."})
             if not department.is_active:
                 raise serializers.ValidationError({"department_code": f"Cannot assign to inactive department '{department_code}'."})
 
-        # Validate manager
+        # --- Manager validation ---
         manager = None
         if manager_emp_id:
             manager = Employee.objects.filter(user__emp_id__iexact=manager_emp_id).first()
@@ -167,45 +177,88 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
             if manager.user.role not in ["Manager", "Admin"]:
                 raise serializers.ValidationError({"manager": f"Assigned manager must be Manager/Admin."})
 
+        # --- Unique Email Check ---
         if User.objects.filter(email__iexact=email).exists():
             raise serializers.ValidationError({"email": "User with this email already exists."})
 
-        # Create user + employee
+        # --- Create user linked with department ---
         user = User.objects.create_user(
             email=email,
             first_name=first_name,
             last_name=last_name,
             role=role,
+            department=department,
         )
-        employee = Employee.objects.create(user=user, department=department, manager=manager, **validated_data)
+
+        # --- Create employee record ---
+        employee = Employee.objects.create(
+            user=user,
+            department=department,
+            manager=manager,
+            **validated_data,
+        )
         return employee
 
+    # =======================================================
+    # ✅ UPDATE (Admin / Department / Manager Edits)
+    # =======================================================
     @transaction.atomic
     def update(self, instance, validated_data):
-        department_code = validated_data.pop("department_code", None)
-        manager_emp_id = validated_data.pop("manager", None)
+        department_value = validated_data.pop("department_code", None)
+        manager_value = validated_data.pop("manager", None)
+        role = validated_data.get("role")
 
-        if department_code:
-            department = Department.objects.filter(code__iexact=department_code).first()
+        # --- Department update (id/code/name) ---
+        if department_value:
+            department = Department.objects.filter(
+                models.Q(id__iexact=department_value)
+                | models.Q(code__iexact=department_value)
+                | models.Q(name__iexact=department_value)
+            ).first()
             if not department:
-                raise serializers.ValidationError({"department_code": f"Department '{department_code}' not found."})
+                raise serializers.ValidationError({
+                    "department_code": f"Department '{department_value}' not found."
+                })
+            if not department.is_active:
+                raise serializers.ValidationError({
+                    "department_code": f"Cannot assign to inactive department '{department_value}'."})
             instance.department = department
+            instance.user.department = department
 
-        if manager_emp_id:
-            manager = Employee.objects.filter(user__emp_id__iexact=manager_emp_id).first()
+        # --- Manager update (emp_id or username) ---
+        if manager_value:
+            manager = (
+                Employee.objects.filter(user__emp_id__iexact=manager_value).first()
+                or Employee.objects.filter(user__username__iexact=manager_value).first()
+            )
             if not manager:
-                raise serializers.ValidationError({"manager": f"Manager '{manager_emp_id}' not found."})
+                raise serializers.ValidationError({
+                    "manager": f"Manager '{manager_value}' not found."
+                })
+            if manager.user.role not in ["Manager", "Admin"]:
+                raise serializers.ValidationError({
+                    "manager": f"Assigned manager must be Manager/Admin."
+                })
             instance.manager = manager
 
+        # --- Role update (Admin, Manager, Employee) ---
+        if role:
+            if role not in dict(User.ROLE_CHOICES):
+                raise serializers.ValidationError({"role": "Invalid role."})
+            instance.user.role = role
+
+        # --- Sync User fields ---
         user = instance.user
         for field in ["email", "first_name", "last_name", "role"]:
             if field in validated_data:
                 setattr(user, field, validated_data.pop(field))
         user.save()
 
+        # --- Update Employee fields ---
         for field, value in validated_data.items():
             setattr(instance, field, value)
         instance.save()
+
         return instance
 
 
@@ -294,6 +347,7 @@ class EmployeeCSVUploadSerializer(serializers.Serializer):
                         first_name=first_name,
                         last_name=last_name,
                         role=role,
+                        department=department,
                     )
                     user.emp_id = emp_id
                     user.set_password("Default@123")
