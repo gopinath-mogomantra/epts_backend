@@ -39,6 +39,7 @@ class DefaultPagination(PageNumberPagination):
 # ===========================================================
 class DepartmentViewSet(viewsets.ModelViewSet):
     """CRUD APIs for departments (Admin-only create/update/delete)."""
+
     queryset = Department.objects.all().order_by("name")
     serializer_class = DepartmentSerializer
     lookup_field = "code"
@@ -59,13 +60,13 @@ class DepartmentViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         if not (request.user.is_superuser or getattr(request.user, "role", "") == "Admin"):
             return Response({"error": "Only Admins can create departments."}, status=status.HTTP_403_FORBIDDEN)
-        logger.info(f"Department created by {request.user.emp_id}")
+        logger.info(f"✅ Department created by {request.user.username}")
         return super().create(request, *args, **kwargs)
 
     def update(self, request, *args, **kwargs):
         if not (request.user.is_superuser or getattr(request.user, "role", "") == "Admin"):
             return Response({"error": "Only Admins can update departments."}, status=status.HTTP_403_FORBIDDEN)
-        logger.info(f"Department updated by {request.user.emp_id}")
+        logger.info(f"✏️ Department updated by {request.user.username}")
         return super().update(request, *args, **kwargs)
 
     def destroy(self, request, *args, **kwargs):
@@ -77,15 +78,15 @@ class DepartmentViewSet(viewsets.ModelViewSet):
         force_delete = request.query_params.get("force", "").lower() == "true"
         if force_delete:
             instance.delete()
-            logger.warning(f"Department {instance.name} permanently deleted by {request.user.emp_id}")
-            return Response({"message": f"🗑️ Department '{instance.name}' permanently deleted."}, status=status.HTTP_204_NO_CONTENT)
+            logger.warning(f"🗑️ Department '{instance.name}' permanently deleted by {request.user.username}")
+            return Response({"message": f"Department '{instance.name}' permanently deleted."}, status=status.HTTP_204_NO_CONTENT)
 
-        if instance.employees.filter(is_active=True).exists():
+        if instance.employees.filter(status="Active").exists():
             return Response({"error": "Cannot deactivate department with active employees."}, status=status.HTTP_400_BAD_REQUEST)
 
         instance.is_active = False
         instance.save(update_fields=["is_active"])
-        logger.info(f"Department {instance.name} deactivated by {request.user.emp_id}")
+        logger.info(f"🚫 Department '{instance.name}' deactivated by {request.user.username}")
         return Response({"message": f"✅ Department '{instance.name}' deactivated successfully."}, status=status.HTTP_200_OK)
 
 
@@ -94,16 +95,14 @@ class DepartmentViewSet(viewsets.ModelViewSet):
 # ===========================================================
 class EmployeeViewSet(viewsets.ModelViewSet):
     """Unified CRUD viewset for employees."""
+
     queryset = Employee.objects.select_related("user", "department", "manager").prefetch_related("team_members")
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = DefaultPagination
     lookup_field = "emp_id"
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ["department", "manager", "status", "is_active"]
-    search_fields = [
-        "user__first_name", "user__last_name", "user__emp_id",
-        "designation", "phone", "department__name"
-    ]
+    filterset_fields = ["department", "manager", "status"]
+    search_fields = ["user__first_name", "user__last_name", "user__emp_id", "designation", "contact_number", "department__name"]
     ordering_fields = ["joining_date", "user__first_name", "user__emp_id"]
 
     def get_serializer_class(self):
@@ -135,7 +134,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         employee = serializer.save()
-        logger.info(f"Employee {employee.emp_id} created by {request.user.emp_id}")
+        logger.info(f"👤 Employee '{employee.emp_id}' created by {request.user.username}")
 
         return Response(
             {
@@ -156,7 +155,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(employee, data=request.data, partial=True, context={"request": request})
         serializer.is_valid(raise_exception=True)
         serializer.save()
-        logger.info(f"Employee {employee.emp_id} updated by {user.emp_id}")
+        logger.info(f"✏️ Employee '{employee.emp_id}' updated by {user.username}")
 
         return Response(
             {
@@ -166,7 +165,9 @@ class EmployeeViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK,
         )
 
+    @transaction.atomic
     def destroy(self, request, *args, **kwargs):
+        """Soft delete an employee."""
         employee = self.get_object()
         user = request.user
 
@@ -175,15 +176,13 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         if not (user.is_superuser or getattr(user, "role", "") in ["Admin", "Manager"]):
             return Response({"error": "You do not have permission to delete employees."}, status=status.HTTP_403_FORBIDDEN)
 
-        employee.deactivate()
+        employee.status = "Inactive"
+        employee.save(update_fields=["status"])
         employee.user.is_active = False
         employee.user.save(update_fields=["is_active"])
-        logger.warning(f"Employee {employee.emp_id} deactivated by {user.emp_id}")
 
-        return Response(
-            {"message": f"🟡 Employee '{employee.user.emp_id}' deactivated successfully."},
-            status=status.HTTP_200_OK,
-        )
+        logger.warning(f"⚠️ Employee '{employee.emp_id}' deactivated by {user.username}")
+        return Response({"message": f"🟡 Employee '{employee.user.emp_id}' deactivated successfully."}, status=status.HTTP_200_OK)
 
     # --------------------------------------------------------
     # TEAM MEMBERS (Paginated)
@@ -246,17 +245,17 @@ class EmployeeViewSet(viewsets.ModelViewSet):
     def summary(self, request):
         """HR/Admin summary of department and employee stats."""
         total_employees = Employee.objects.count()
-        active_employees = Employee.objects.filter(is_active=True).count()
+        active_employees = Employee.objects.filter(status="Active").count()
         on_leave = Employee.objects.filter(status="On Leave").count()
-        resigned = Employee.objects.filter(status="Resigned").count()
-        managers = Employee.objects.filter(role="Manager", is_active=True).count()
+        inactive = Employee.objects.filter(status="Inactive").count()
+        managers = Employee.objects.filter(role="Manager", status="Active").count()
 
         departments = Department.objects.filter(is_active=True)
         dept_summary = [
             {
                 "department": d.name,
                 "code": d.code,
-                "active_employees": d.employees.filter(is_active=True).count(),
+                "active_employees": d.employees.filter(status="Active").count(),
                 "total_employees": d.employees.count(),
             }
             for d in departments
@@ -267,7 +266,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
                 "total_employees": total_employees,
                 "active_employees": active_employees,
                 "on_leave": on_leave,
-                "resigned": resigned,
+                "inactive": inactive,
                 "total_managers": managers,
             },
             "departments": dept_summary,
@@ -281,20 +280,21 @@ class EmployeeCSVUploadView(APIView):
     """Upload and process a CSV file to bulk-create employees."""
     permission_classes = [permissions.IsAuthenticated]
 
+    @transaction.atomic
     def post(self, request, *args, **kwargs):
         if not (request.user.is_superuser or getattr(request.user, "role", "") == "Admin"):
             return Response({"error": "Only Admins can upload employee CSV files."}, status=status.HTTP_403_FORBIDDEN)
 
         serializer = EmployeeCSVUploadSerializer(data=request.data)
-        if serializer.is_valid():
-            result = serializer.save()
-            logger.info(f"CSV upload processed by {request.user.emp_id}")
-            return Response(
-                {
-                    "message": "✅ Employee CSV processed successfully.",
-                    "uploaded_count": result["success_count"],
-                    "errors": result["errors"],
-                },
-                status=status.HTTP_201_CREATED,
-            )
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.is_valid(raise_exception=True)
+        result = serializer.save()
+
+        logger.info(f"📁 CSV upload processed by {request.user.username}")
+        return Response(
+            {
+                "message": "✅ Employee CSV processed successfully.",
+                "uploaded_count": result["success_count"],
+                "errors": result["errors"],
+            },
+            status=status.HTTP_201_CREATED,
+        )

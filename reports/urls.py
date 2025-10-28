@@ -1,5 +1,5 @@
 # ===============================================
-# reports/urls.py (Final Verified — Frontend & API-Ready)
+# reports/urls.py (Final — Frontend & API Aligned)
 # ===============================================
 # Routes for:
 # 1️⃣ Weekly consolidated report
@@ -19,7 +19,7 @@ from .views import (
     DepartmentReportView,
     EmployeeHistoryView,
     ExportWeeklyCSVView,
-    PrintPerformanceReportView,  # ✅ newly added import
+    PrintPerformanceReportView,
 )
 
 app_name = "reports"
@@ -45,7 +45,7 @@ urlpatterns = [
 
     # ----------------------------------------------------
     # 4️⃣ Department-Wise Weekly Report
-    # Example: /api/reports/department/?department_name=IT&week=43&year=2025
+    # Example: /api/reports/department/?department_name=QA&week=43&year=2025
     # ----------------------------------------------------
     path("department/", DepartmentReportView.as_view(), name="department-report"),
 
