@@ -1,5 +1,5 @@
 # ===========================================================
-# users/serializers.py ✅ Final Frontend-Aligned & Production-Ready
+# users/serializers.py ✅ Final Frontend-Aligned & Bug-Free
 # Employee Performance Tracking System (EPTS)
 # ===========================================================
 
@@ -23,13 +23,9 @@ logger = logging.getLogger("users")
 # ===========================================================
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
-    Allows login via username, emp_id, or email.
-    Implements:
-    - Case-insensitive lookup
-    - Account lock enforcement
-    - Failed login tracking
-    - Password change enforcement
-    - Returns user info with JWT
+    Safe and PK-secure login serializer.
+    Supports username, emp_id, or email.
+    Avoids Django authenticate() to prevent FK errors.
     """
 
     username_field = "username"
@@ -45,7 +41,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 {"detail": "Both username (emp_id/username/email) and password are required."}
             )
 
-        # Find user by username, emp_id, or email (case-insensitive)
+        # Try to match user by username, emp_id, or email
         user = User.objects.filter(
             models.Q(username__iexact=login_input)
             | models.Q(emp_id__iexact=login_input)
@@ -55,7 +51,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         if not user:
             raise serializers.ValidationError({"detail": "Invalid username or password."})
 
-        # Handle account lockout
+        # Check account lock
         if user.account_locked:
             if user.locked_at:
                 elapsed = timezone.now() - user.locked_at
@@ -69,9 +65,8 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 else:
                     user.unlock_account()
 
-        # Authenticate (Django expects username)
-        authenticated_user = authenticate(username=user.username, password=password)
-        if not authenticated_user:
+        # ✅ Use check_password instead of authenticate() (bypasses USERNAME_FIELD issue)
+        if not user.check_password(password):
             user.increment_failed_attempts()
             if user.account_locked:
                 raise serializers.ValidationError({
@@ -90,24 +85,29 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 "detail": "Password change required before login."
             })
 
-        # Generate JWT
-        data = super().validate({"username": user.username, "password": password})
+        # ✅ Manually create JWT since authenticate() is not used
+        refresh = self.get_token(user)
+        access = refresh.access_token
 
-        # Add custom payload
-        data["user"] = {
-            "id": user.id,
-            "emp_id": user.emp_id,
-            "username": user.username,
-            "email": user.email,
-            "first_name": user.first_name,
-            "last_name": user.last_name,
-            "role": user.role,
-            "department": user.department.name if user.department else None,
-            "manager": user.manager.username if user.manager else None,
-            "status": user.status,
-            "is_verified": user.is_verified,
-            "is_active": user.is_active,
+        data = {
+            "refresh": str(refresh),
+            "access": str(access),
+            "user": {
+                "id": user.id,
+                "emp_id": user.emp_id,
+                "username": user.username,
+                "email": user.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "role": user.role,
+                "department": user.department.name if user.department else None,
+                "manager": user.manager.username if user.manager else None,
+                "status": user.status,
+                "is_verified": user.is_verified,
+                "is_active": user.is_active,
+            }
         }
+
         return data
 
     @classmethod
@@ -117,9 +117,8 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         token["role"] = user.role
         return token
 
-
 # ===========================================================
-# ✅ 2. REGISTER SERIALIZER
+# ✅ 2. REGISTER SERIALIZER (Safe PK + FK Assignment)
 # ===========================================================
 class RegisterSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField(read_only=True)
@@ -186,7 +185,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         department_instance = None
         manager_instance = None
 
-        # Resolve department (id/code/name)
+        # Resolve department
         if dept_value:
             if str(dept_value).isdigit():
                 department_instance = Department.objects.filter(id=int(dept_value)).first()
@@ -197,7 +196,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             if not department_instance:
                 raise serializers.ValidationError({"department": f"No department found matching '{dept_value}'."})
 
-        # Resolve manager (emp_id/username)
+        # Resolve manager
         if manager_value:
             manager_instance = (
                 User.objects.filter(emp_id__iexact=manager_value).first()
@@ -206,30 +205,34 @@ class RegisterSerializer(serializers.ModelSerializer):
             if not manager_instance:
                 raise serializers.ValidationError({"manager": f"No manager found matching '{manager_value}'."})
 
-        # Generate emp_id (thread-safe)
+        # Generate emp_id safely
         with transaction.atomic():
             last_user = User.objects.select_for_update().order_by("-id").first()
             last_num = int(last_user.emp_id.replace("EMP", "")) if last_user and last_user.emp_id else 0
             new_emp_id = f"EMP{last_num + 1:04d}"
 
-        # Generate secure temporary password
+        # Generate temporary password
         first_name = validated_data.get("first_name", "User").capitalize()
         random_part = "".join(random.choices(string.ascii_letters + string.digits, k=4))
         temp_password = f"{first_name}@{random_part}"
 
-        # Create user
+        # Step 1: Create user first (without relations)
         user = User.objects.create_user(
             emp_id=new_emp_id,
             password=temp_password,
-            department=department_instance,
-            manager=manager_instance,
             **validated_data,
         )
-        user.force_password_change = True
-        user.save(update_fields=["force_password_change"])
 
-        logger.info("✅ User %s registered with temp password %s", user.emp_id, temp_password)
+        # Step 2: Safely assign relations
+        if department_instance:
+            user.department = department_instance
+        if manager_instance:
+            user.manager = manager_instance
+        user.force_password_change = True
+        user.save(update_fields=["department", "manager", "force_password_change"])
+
         user.temp_password = temp_password
+        logger.info("✅ User %s registered with temp password %s", user.emp_id, temp_password)
         return user
 
     def to_representation(self, instance):
