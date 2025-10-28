@@ -6,6 +6,9 @@ from django.conf import settings
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from datetime import timedelta
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # -----------------------------------------------------------
@@ -22,7 +25,7 @@ def current_year():
 
 
 def get_week_range(date):
-    """Return start and end dates for the week of given date."""
+    """Return start and end dates for the week of given date (Monday..Sunday)."""
     start = date - timedelta(days=date.weekday())  # Monday
     end = start + timedelta(days=6)  # Sunday
     return start, end
@@ -129,7 +132,8 @@ class PerformanceEvaluation(models.Model):
         ordering = ["-review_date", "-created_at"]
         verbose_name = "Performance Evaluation"
         verbose_name_plural = "Performance Evaluations"
-        unique_together = ("employee", "week_number", "year", "evaluation_type")
+        # unique_together must be a tuple of tuples
+        unique_together = (("employee", "week_number", "year", "evaluation_type"),)
         indexes = [
             models.Index(fields=["employee"]),
             models.Index(fields=["department"]),
@@ -144,12 +148,14 @@ class PerformanceEvaluation(models.Model):
     def clean(self):
         """Ensure each metric is between 0 and 100."""
         for field in [
-            "communication_skills", "multitasking", "team_skills", "technical_skills",
+            "communication_skills", "multasking" if False else "multitasking", "team_skills", "technical_skills",
             "job_knowledge", "productivity", "creativity", "work_quality",
             "professionalism", "work_consistency", "attitude", "cooperation",
             "dependability", "attendance", "punctuality",
         ]:
-            value = getattr(self, field)
+            value = getattr(self, field, 0)
+            if value is None:
+                value = 0
             if value < 0 or value > 100:
                 raise ValidationError({field: "Each metric must be between 0 and 100."})
 
@@ -167,43 +173,56 @@ class PerformanceEvaluation(models.Model):
         ]
         total = sum(int(x or 0) for x in metrics)
         self.total_score = total
-        self.average_score = round((total / 1500) * 100, 2)
+        # 15 metrics × 100 = 1500 max
+        self.average_score = round((total / 1500) * 100, 2) if total >= 0 else 0.0
         return total
 
     # -------------------------------------------------------
     # Rank Calculation (Manual trigger if needed)
     # -------------------------------------------------------
     def calculate_rank(self):
-        """Compute rank within the same department/week manually."""
-        evaluations = PerformanceEvaluation.objects.filter(
+        """
+        Compute rank within the same department/week and evaluation_type.
+        Sets self.rank for this instance and returns it.
+        """
+        qs = PerformanceEvaluation.objects.filter(
             department=self.department,
             week_number=self.week_number,
             year=self.year,
             evaluation_type=self.evaluation_type,
-        ).order_by("-average_score", "employee__user__first_name")
+        ).order_by("-average_score", "employee__user__first_name", "employee__user__emp_id")
 
-        for index, eval_obj in enumerate(evaluations, start=1):
-            eval_obj.rank = index
-            eval_obj.save(update_fields=["rank"])
+        # Build ordered list of pks and set ranks
+        ordered_pks = [obj.pk for obj in qs]
+        for index, pk in enumerate(ordered_pks, start=1):
+            if pk == self.pk:
+                self.rank = index
+                self.save(update_fields=["rank"])
+            else:
+                # ensure other records have correct rank value
+                PerformanceEvaluation.objects.filter(pk=pk).update(rank=index)
         return self.rank
 
     # -------------------------------------------------------
     # Auto-Ranking Helper (Used by Signals)
     # -------------------------------------------------------
     def auto_rank_trigger(self):
-        """Trigger ranking recalculation for this record’s department/week."""
+        """
+        Recalculate ranking for this record's department/week/evaluation_type.
+        Use this from a post_save signal or management command.
+        """
         if not self.department:
             return
         evaluations = PerformanceEvaluation.objects.filter(
             department=self.department,
             week_number=self.week_number,
             year=self.year,
-        ).order_by("-average_score", "employee__user__first_name")
+            evaluation_type=self.evaluation_type,
+        ).order_by("-average_score", "employee__user__first_name", "employee__user__emp_id")
 
         for i, record in enumerate(evaluations, start=1):
             if record.rank != i:
-                record.rank = i
-                record.save(update_fields=["rank"])
+                PerformanceEvaluation.objects.filter(pk=record.pk).update(rank=i)
 
     # -------------------------------------------------------
     # Helpers
@@ -222,34 +241,55 @@ class PerformanceEvaluation(models.Model):
         }
 
     def department_rank(self):
-        """Return department rank position for this employee."""
+        """Return department rank position (1-based) for this employee, robustly using PKs."""
         qs = PerformanceEvaluation.objects.filter(
             department=self.department,
             week_number=self.week_number,
             year=self.year,
-        ).order_by("-average_score")
-        return list(qs).index(self) + 1 if self in qs else None
+            evaluation_type=self.evaluation_type,
+        ).order_by("-average_score", "employee__user__emp_id")
+        ordered_pks = [o.pk for o in qs]
+        try:
+            return ordered_pks.index(self.pk) + 1
+        except ValueError:
+            return None
 
     def overall_rank(self):
-        """Return overall organization-wide rank."""
+        """Return overall organization-wide rank (1-based) for this employee for the week/year/evaluation_type)."""
         qs = PerformanceEvaluation.objects.filter(
             week_number=self.week_number,
             year=self.year,
-        ).order_by("-average_score")
-        return list(qs).index(self) + 1 if self in qs else None
+            evaluation_type=self.evaluation_type,
+        ).order_by("-average_score", "employee__user__emp_id")
+        ordered_pks = [o.pk for o in qs]
+        try:
+            return ordered_pks.index(self.pk) + 1
+        except ValueError:
+            return None
 
     # -------------------------------------------------------
     # Save Override
     # -------------------------------------------------------
     def save(self, *args, **kwargs):
-        """Auto-calculate total, average, and readable period before saving."""
-        self.calculate_total_score()
+        """
+        Auto-calculate total, average, week/year (from review_date), and readable period before saving.
+        """
+        # Ensure week_number/year reflect review_date
+        if self.review_date:
+            iso = self.review_date.isocalendar()
+            # iso is (year, weeknumber, weekday) for date.isocalendar()
+            # depending on Python version, ensure mapping consistent
+            self.week_number = iso[1]
+            self.year = iso[0]
 
-        # ✅ Department fallback (if not manually set)
-        if not self.department and self.employee and self.employee.department:
+        # Department fallback (if not manually set)
+        if not self.department and getattr(self.employee, "department", None):
             self.department = self.employee.department
 
-        # ✅ Auto-generate readable evaluation period
+        # Calculate scores
+        self.calculate_total_score()
+
+        # Auto-generate readable evaluation period
         if not self.evaluation_period:
             start, end = get_week_range(self.review_date)
             self.evaluation_period = (
@@ -258,9 +298,12 @@ class PerformanceEvaluation(models.Model):
 
         super().save(*args, **kwargs)
 
-        # Debug log (for console testing)
-        print(
-            f"[Auto-Rank] Saved {self.employee.user.emp_id} | Avg: {self.average_score} | Dept: {self.department.code if self.department else '-'}"
+        # Log saving for debugging (use logger instead of print)
+        logger.debug(
+            "[Auto-Rank] Saved %s | Avg: %s | Dept: %s",
+            getattr(self.employee.user, "emp_id", "N/A"),
+            self.average_score,
+            getattr(self.department, "code", "-"),
         )
 
     # -------------------------------------------------------

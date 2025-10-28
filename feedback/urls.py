@@ -1,5 +1,5 @@
 # ===============================================
-# feedback/urls.py (Final Verified Version)
+# feedback/urls.py (Final — Frontend + Swagger Verified)
 # ===============================================
 
 from django.urls import path, include
@@ -8,19 +8,18 @@ from .views import (
     GeneralFeedbackViewSet,
     ManagerFeedbackViewSet,
     ClientFeedbackViewSet,
-    MyFeedbackView,   # ✅ Employee's all feedback view
+    MyFeedbackView,  # ✅ Employee dashboard (self feedback view)
 )
 
 app_name = "feedback"
 
 """
-Routes for Feedback Module:
----------------------------
-Includes:
-- General Feedback APIs (Admin/HR)
-- Manager Feedback APIs
-- Client Feedback APIs
-- My Feedback (Employee self-dashboard)
+Feedback Module API Routes
+--------------------------
+🔹 /api/feedback/general-feedback/   → Admin/HR feedback CRUD
+🔹 /api/feedback/manager-feedback/   → Manager feedback CRUD
+🔹 /api/feedback/client-feedback/    → Client feedback CRUD
+🔹 /api/feedback/my-feedback/        → Employee self feedback dashboard
 """
 
 # -----------------------------------------------------------
@@ -36,5 +35,5 @@ router.register(r"client-feedback", ClientFeedbackViewSet, basename="client-feed
 # -----------------------------------------------------------
 urlpatterns = [
     path("", include(router.urls)),
-    path("my-feedback/", MyFeedbackView.as_view(), name="my-feedback"),  # ✅ Employee’s all feedback
+    path("my-feedback/", MyFeedbackView.as_view(), name="my-feedback"),
 ]

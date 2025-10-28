@@ -1,7 +1,6 @@
 # ===========================================================
-# performance/views.py (Final Enhanced — Ranking + Summary Ready)
+# performance/views.py (Final — Frontend + Business Logic Aligned)
 # ===========================================================
-
 from rest_framework import viewsets, permissions, status, filters
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -22,6 +21,7 @@ from employee.models import Employee
 from notifications.models import Notification
 
 logger = logging.getLogger(__name__)
+
 
 # ===========================================================
 # ✅ PERFORMANCE VIEWSET (CRUD + FILTERS)
@@ -74,16 +74,16 @@ class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
 
         try:
             instance = serializer.save()
-            instance.auto_rank_trigger()  # ✅ Auto rank calculation
+            instance.auto_rank_trigger()
         except IntegrityError:
             return Response(
-                {"error": "A performance record already exists for this week and evaluator."},
+                {"error": "Performance record already exists for this week and evaluator."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         except Exception as exc:
             logger.exception("Error saving performance evaluation: %s", exc)
             return Response(
-                {"error": "Something went wrong while saving the evaluation."},
+                {"error": "An unexpected error occurred while saving evaluation."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -95,24 +95,19 @@ class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
                 auto_delete=True,
             )
         except Exception as e:
-            logger.warning("⚠️ Notification failed: %s", e)
+            logger.warning("Notification creation failed: %s", e)
 
         return Response(
             {
                 "message": "✅ Performance evaluation recorded successfully.",
-                "evaluation": {
-                    "employee": {
-                        "emp_id": instance.employee.user.emp_id,
-                        "name": f"{instance.employee.user.first_name} {instance.employee.user.last_name}".strip(),
-                    },
-                    "department": (
-                        {"code": instance.department.code, "name": instance.department.name}
-                        if instance.department else None
-                    ),
+                "data": {
+                    "employee_name": f"{instance.employee.user.first_name} {instance.employee.user.last_name}".strip(),
+                    "emp_id": instance.employee.user.emp_id,
+                    "department_name": getattr(instance.department, "name", None),
                     "average_score": instance.average_score,
                     "rank": instance.rank,
-                    "remarks": instance.remarks,
                     "evaluation_period": instance.evaluation_period,
+                    "remarks": instance.remarks,
                 },
             },
             status=status.HTTP_201_CREATED,
@@ -120,13 +115,10 @@ class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
 
 
 # ===========================================================
-# ✅ GET PERFORMANCE RECORDS BY EMPLOYEE ID (With Rank)
+# ✅ GET PERFORMANCE RECORDS BY EMPLOYEE ID
 # ===========================================================
 class EmployeePerformanceByIdView(APIView):
-    """
-    Returns all performance evaluations for a specific employee.
-    Supports optional week/year filters.
-    """
+    """Return all performance evaluations for a specific employee."""
 
     permission_classes = [permissions.IsAuthenticated]
 
@@ -162,17 +154,15 @@ class EmployeePerformanceByIdView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        ranked_qs = qs.annotate(
-            computed_rank=Window(expression=Rank(), order_by=F("average_score").desc())
-        ).order_by("-average_score")
-
+        ranked_qs = qs.annotate(computed_rank=Window(expression=Rank(), order_by=F("average_score").desc()))
         serializer = PerformanceEvaluationSerializer(ranked_qs, many=True)
+
         return Response(
             {
                 "employee": {
                     "emp_id": emp.user.emp_id,
-                    "name": f"{emp.user.first_name} {emp.user.last_name}".strip(),
-                    "department": emp.department.name if emp.department else "-",
+                    "employee_name": f"{emp.user.first_name} {emp.user.last_name}".strip(),
+                    "department_name": getattr(emp.department, "name", "-"),
                 },
                 "record_count": ranked_qs.count(),
                 "evaluations": serializer.data,
@@ -185,14 +175,7 @@ class EmployeePerformanceByIdView(APIView):
 # ✅ PERFORMANCE SUMMARY (Admin / Manager Dashboard)
 # ===========================================================
 class PerformanceSummaryView(APIView):
-    """
-    Weekly summary of departments and leaderboard.
-    Includes:
-      - Overall Department Avg
-      - Top 3 Performers
-      - Weak 3 Performers
-      - Leaderboard (optional ?include_rankings=true)
-    """
+    """Weekly summary of departments and leaderboard."""
 
     permission_classes = [permissions.IsAuthenticated]
 
@@ -205,10 +188,9 @@ class PerformanceSummaryView(APIView):
         if not latest_year:
             return Response({"message": "No performance data yet."}, status=status.HTTP_200_OK)
 
-        latest_week = (
-            PerformanceEvaluation.objects.filter(year=latest_year)
-            .aggregate(max_week=Max("week_number"))["max_week"]
-        )
+        latest_week = PerformanceEvaluation.objects.filter(year=latest_year).aggregate(max_week=Max("week_number"))[
+            "max_week"
+        ]
         if not latest_week:
             return Response({"message": "No weekly data found."}, status=status.HTTP_200_OK)
 
@@ -217,24 +199,16 @@ class PerformanceSummaryView(APIView):
         )
 
         overall_avg = round(qs.aggregate(Avg("average_score"))["average_score__avg"] or 0, 2)
-        dept_summary = (
-            qs.values("department__name")
-            .annotate(avg_score=Avg("average_score"))
-            .order_by("-avg_score")
-        )
+        dept_summary = qs.values("department__name").annotate(avg_score=Avg("average_score")).order_by("-avg_score")
 
-        # 🔹 Department Summaries
-        departments = []
-        for d in dept_summary:
-            dname = d["department__name"] or "N/A"
-            avg_score = round(d["avg_score"], 2)
-            departments.append({"department": dname, "average_score": avg_score})
+        departments = [
+            {"department_name": d["department__name"] or "N/A", "average_score": round(d["avg_score"], 2)}
+            for d in dept_summary
+        ]
 
-        # 🔹 Top 3 and Weak 3
         top_3 = qs.order_by("-average_score")[:3]
         weak_3 = qs.order_by("average_score")[:3]
 
-        from .serializers import PerformanceRankSerializer
         top_serialized = PerformanceRankSerializer(top_3, many=True).data
         weak_serialized = PerformanceRankSerializer(weak_3, many=True).data
 
@@ -246,7 +220,6 @@ class PerformanceSummaryView(APIView):
             "weak_3": weak_serialized,
         }
 
-        # 🔹 Leaderboard (Optional)
         if request.query_params.get("include_rankings", "false").lower() == "true":
             ranked_qs = qs.annotate(rank_position=Window(expression=Rank(), order_by=F("average_score").desc()))
             leaderboard = PerformanceRankSerializer(ranked_qs[:10], many=True).data
@@ -256,7 +229,7 @@ class PerformanceSummaryView(APIView):
 
 
 # ===========================================================
-# ✅ EMPLOYEE DASHBOARD (Self Performance Summary)
+# ✅ EMPLOYEE DASHBOARD (Self Performance Trend)
 # ===========================================================
 class EmployeeDashboardView(APIView):
     """Displays logged-in employee’s personal performance trend."""
@@ -282,7 +255,7 @@ class EmployeeDashboardView(APIView):
             {
                 "employee": {
                     "emp_id": user.emp_id,
-                    "name": f"{user.first_name} {user.last_name}".strip(),
+                    "employee_name": f"{user.first_name} {user.last_name}".strip(),
                 },
                 "overall_average": avg_score,
                 "best_week": {
@@ -297,10 +270,10 @@ class EmployeeDashboardView(APIView):
 
 
 # ===========================================================
-# ✅ ADMIN / MANAGER: VIEW EMPLOYEE PERFORMANCE
+# ✅ ADMIN / MANAGER: VIEW SPECIFIC EMPLOYEE PERFORMANCE
 # ===========================================================
 class EmployeePerformanceView(APIView):
-    """View all or specific evaluations for a given employee."""
+    """View all evaluations for a given employee."""
 
     permission_classes = [permissions.IsAuthenticated]
 
@@ -329,8 +302,8 @@ class EmployeePerformanceView(APIView):
         header = {
             "emp_id": emp.user.emp_id,
             "employee_name": f"{emp.user.first_name} {emp.user.last_name}".strip(),
-            "department": emp.department.name if emp.department else None,
-            "manager": (
+            "department_name": getattr(emp.department, "name", None),
+            "manager_name": (
                 f"{emp.manager.user.first_name} {emp.manager.user.last_name}".strip()
                 if emp.manager else None
             ),
