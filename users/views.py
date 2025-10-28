@@ -1,5 +1,6 @@
 # ===========================================================
-# users/views.py (Frontend-Aligned & Production-Ready)
+# users/views.py ✅ Frontend-Aligned & Serializer-Compatible
+# Employee Performance Tracking System (EPTS)
 # ===========================================================
 
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
@@ -8,7 +9,7 @@ from rest_framework import generics, status, filters
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.decorators import api_view, permission_classes
-from django.contrib.auth import get_user_model, authenticate
+from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.db import transaction
 from django.utils.crypto import get_random_string
@@ -27,19 +28,50 @@ from .serializers import (
 logger = logging.getLogger("users")
 User = get_user_model()
 
-
 # ===========================================================
-# ✅ 1. LOGIN
+# ✅ 1. LOGIN (Using CustomTokenObtainPairSerializer)
 # ===========================================================
 class ObtainTokenPairView(TokenObtainPairView):
-    permission_classes = [AllowAny]
+    """
+    POST /api/users/login/
+    Handles login via emp_id or username.
+    Returns JWT tokens + user payload.
+    """
     serializer_class = CustomTokenObtainPairSerializer
+    permission_classes = [AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except Exception as e:
+            logger.warning(f"Login failed: {str(e)}")
+            return Response(
+                {"detail": str(e), "status": "failed"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        data = serializer.validated_data
+        return Response(
+            {
+                "refresh": data.get("refresh"),
+                "access": data.get("access"),
+                "user": data.get("user"),
+                "status": "success",
+                "message": "Login successful."
+            },
+            status=status.HTTP_200_OK
+        )
 
 
 # ===========================================================
 # ✅ 2. REFRESH TOKEN
 # ===========================================================
 class RefreshTokenView(TokenRefreshView):
+    """
+    POST /api/users/token/refresh/
+    Returns new access token from refresh token.
+    """
     permission_classes = [AllowAny]
 
 
@@ -47,6 +79,11 @@ class RefreshTokenView(TokenRefreshView):
 # ✅ 3. REGISTER USER (Admin / Manager)
 # ===========================================================
 class RegisterView(generics.CreateAPIView):
+    """
+    POST /api/users/register/
+    Allows Admin or Manager to register new users.
+    Automatically creates Employee record.
+    """
     queryset = User.objects.all()
     serializer_class = RegisterSerializer
     permission_classes = [IsAuthenticated]
@@ -56,59 +93,51 @@ class RegisterView(generics.CreateAPIView):
         current_user = request.user
 
         # Permission check
-        if not (current_user.is_admin() or current_user.is_manager()):
+        if not (hasattr(current_user, "role") and current_user.role in ["Admin", "Manager"]):
             return Response(
                 {"error": "Access denied. Only Admin or Manager can create users."},
-                status=status.HTTP_403_FORBIDDEN,
+                status=status.HTTP_403_FORBIDDEN
             )
 
-        serializer = self.get_serializer(data=request.data, context={"request": request})
+        serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         email = serializer.validated_data.get("email")
-        if not email:
-            return Response({"error": "Email is required."}, status=400)
         if User.objects.filter(email__iexact=email).exists():
             return Response({"error": "User with this email already exists."}, status=400)
 
-        # Create user (handled by serializer)
+        # Create user
         user = serializer.save()
-
-        # Ensure joining_date
         if not user.joining_date:
             user.joining_date = timezone.now().date()
             user.save(update_fields=["joining_date"])
 
-        # ✅ Auto-create Employee record (flexible department)
-        try:
-            dept_value = request.data.get("department")
-            department = None
-            if dept_value:
-                if str(dept_value).isdigit():
-                    department = Department.objects.filter(id=int(dept_value)).first()
-                if not department:
-                    department = Department.objects.filter(code__iexact=dept_value).first()
-                if not department:
-                    department = Department.objects.filter(name__iexact=dept_value).first()
+        # Auto-create Employee record
+        dept_value = request.data.get("department")
+        department = None
+        if dept_value:
+            department = Department.objects.filter(
+                models.Q(id__iexact=dept_value)
+                | models.Q(code__iexact=dept_value)
+                | models.Q(name__iexact=dept_value)
+            ).first()
 
-            if not Employee.objects.filter(user=user).exists():
-                Employee.objects.create(
-                    user=user,
-                    emp_id=user.emp_id,
-                    department=department,
-                    status=user.status,
-                    joining_date=user.joining_date,
-                )
-        except Exception as e:
-            logger.warning(f"Employee record creation failed for {user.emp_id}: {e}")
+        if not Employee.objects.filter(user=user).exists():
+            Employee.objects.create(
+                user=user,
+                emp_id=user.emp_id,
+                department=department,
+                joining_date=user.joining_date,
+                status=user.status
+            )
 
-        # ✅ Send email (optional)
+        # Send Email (Optional)
         try:
             send_mail(
                 subject="EPTS - Account Created",
                 message=(
                     f"Hello {user.get_full_name()},\n\n"
-                    f"Your account has been created successfully.\n"
+                    f"Your EPTS account has been created successfully.\n"
                     f"Employee ID: {user.emp_id}\n"
                     f"Temporary Password: {getattr(user, 'temp_password', 'N/A')}\n\n"
                     f"Please log in and change your password immediately.\n\n"
@@ -116,7 +145,7 @@ class RegisterView(generics.CreateAPIView):
                 ),
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 recipient_list=[user.email],
-                fail_silently=True,
+                fail_silently=True
             )
         except Exception as e:
             logger.warning(f"Email send failed for {user.emp_id}: {e}")
@@ -128,7 +157,7 @@ class RegisterView(generics.CreateAPIView):
                 "user": ProfileSerializer(user).data,
                 "temp_password": getattr(user, "temp_password", None) if settings.DEBUG else None,
             },
-            status=status.HTTP_201_CREATED,
+            status=status.HTTP_201_CREATED
         )
 
 
@@ -171,6 +200,7 @@ class ProfileView(APIView):
 
         for k, v in updates.items():
             setattr(user, k, v)
+
         if updates:
             user.save(update_fields=list(updates.keys()))
             logger.info(f"Profile updated by {user.emp_id}")
@@ -225,7 +255,7 @@ class UserListView(generics.ListAPIView):
         return qs
 
     def list(self, request, *args, **kwargs):
-        if not request.user.is_admin():
+        if not (hasattr(request.user, "role") and request.user.role == "Admin"):
             return Response({"error": "Access denied. Admins only."}, status=403)
         return super().list(request, *args, **kwargs)
 
@@ -301,7 +331,7 @@ class UserDetailView(APIView):
     @transaction.atomic
     def patch(self, request, emp_id):
         admin = request.user
-        if not admin.is_admin():
+        if not (hasattr(admin, "role") and admin.role == "Admin"):
             return Response({"error": "Access denied. Admins only."}, status=403)
 
         user = self.get_object(emp_id)
@@ -311,7 +341,7 @@ class UserDetailView(APIView):
         editable_fields = ["first_name", "last_name", "email", "phone", "is_verified", "status", "department", "manager"]
         updates = {f: v for f, v in request.data.items() if f in editable_fields}
 
-        # Resolve manager if provided
+        # Resolve manager
         if "manager" in updates:
             mgr_val = updates.pop("manager")
             manager_obj = (
@@ -336,7 +366,7 @@ class UserDetailView(APIView):
     @transaction.atomic
     def delete(self, request, emp_id):
         admin = request.user
-        if not admin.is_admin():
+        if not (hasattr(admin, "role") and admin.role == "Admin"):
             return Response({"error": "Access denied. Admins only."}, status=403)
 
         user = self.get_object(emp_id)
@@ -344,7 +374,7 @@ class UserDetailView(APIView):
             return Response({"error": "User not found."}, status=404)
         if user == admin:
             return Response({"error": "You cannot deactivate your own account."}, status=400)
-        if user.is_admin():
+        if hasattr(user, "role") and user.role == "Admin":
             return Response({"error": "Cannot deactivate another admin account."}, status=400)
 
         user.is_active = False
