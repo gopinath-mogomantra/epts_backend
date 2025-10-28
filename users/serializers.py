@@ -185,18 +185,22 @@ class RegisterSerializer(serializers.ModelSerializer):
         department_instance = None
         manager_instance = None
 
-        # Resolve department
+        # ✅ Resolve department (robust lookup)
         if dept_value:
-            if str(dept_value).isdigit():
-                department_instance = Department.objects.filter(id=int(dept_value)).first()
+            dept_value = str(dept_value).strip()
+            department_instance = Department.objects.filter(
+                models.Q(code__iexact=dept_value) |
+                models.Q(name__iexact=dept_value) |
+                models.Q(id__iexact=dept_value)
+            ).first()
             if not department_instance:
-                department_instance = Department.objects.filter(code__iexact=dept_value).first()
-            if not department_instance:
-                department_instance = Department.objects.filter(name__iexact=dept_value).first()
-            if not department_instance:
-                raise serializers.ValidationError({"department": f"No department found matching '{dept_value}'."})
+                raise serializers.ValidationError({
+                    "department": f"Department '{dept_value}' not found. Available: {[d.name for d in Department.objects.all()]}"
+                })
+        else:
+            raise serializers.ValidationError({"department": "Department is required for Employees."})
 
-        # Resolve manager
+        # ✅ Resolve manager (emp_id/username)
         if manager_value:
             manager_instance = (
                 User.objects.filter(emp_id__iexact=manager_value).first()
@@ -205,34 +209,28 @@ class RegisterSerializer(serializers.ModelSerializer):
             if not manager_instance:
                 raise serializers.ValidationError({"manager": f"No manager found matching '{manager_value}'."})
 
-        # Generate emp_id safely
-        with transaction.atomic():
-            last_user = User.objects.select_for_update().order_by("-id").first()
-            last_num = int(last_user.emp_id.replace("EMP", "")) if last_user and last_user.emp_id else 0
-            new_emp_id = f"EMP{last_num + 1:04d}"
+        # Generate new emp_id
+        last_user = User.objects.select_for_update().order_by("-id").first()
+        last_num = int(last_user.emp_id.replace("EMP", "")) if last_user and last_user.emp_id else 0
+        new_emp_id = f"EMP{last_num + 1:04d}"
 
         # Generate temporary password
         first_name = validated_data.get("first_name", "User").capitalize()
         random_part = "".join(random.choices(string.ascii_letters + string.digits, k=4))
         temp_password = f"{first_name}@{random_part}"
 
-        # Step 1: Create user first (without relations)
+        # ✅ Create user safely
         user = User.objects.create_user(
             emp_id=new_emp_id,
             password=temp_password,
+            department=department_instance,
+            manager=manager_instance,
             **validated_data,
         )
-
-        # Step 2: Safely assign relations
-        if department_instance:
-            user.department = department_instance
-        if manager_instance:
-            user.manager = manager_instance
         user.force_password_change = True
-        user.save(update_fields=["department", "manager", "force_password_change"])
+        user.save(update_fields=["force_password_change"])
 
         user.temp_password = temp_password
-        logger.info("✅ User %s registered with temp password %s", user.emp_id, temp_password)
         return user
 
     def to_representation(self, instance):
