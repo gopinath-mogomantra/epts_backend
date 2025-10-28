@@ -1,23 +1,63 @@
 # ===============================================
-# notifications/urls.py (Final Verified Version)
+# notifications/urls.py (Final — API & Frontend Ready)
 # ===============================================
 
 from django.urls import path
-from .views import NotificationListView, MarkNotificationReadView
+from .views import (
+    NotificationListView,
+    UnreadCountView,
+    MarkNotificationReadView,
+    MarkNotificationUnreadView,
+    MarkAllNotificationsReadView,
+    NotificationDeleteView,
+)
 
 app_name = "notifications"
 
 """
 Routes for Notifications Module:
 --------------------------------
-- List all notifications (unread/read/all)
-- Mark a specific notification as read (auto-delete if required)
+🔹 Fetch, mark, and manage notifications for employees.
+🔹 Used for frontend bell icon, dropdown, and dashboard alerts.
+
+Available Endpoints:
+--------------------------------
+1️⃣ GET   /api/notifications/                     → List user notifications (filter by read/unread)
+2️⃣ GET   /api/notifications/unread-count/        → Get unread count for header badge
+3️⃣ PATCH /api/notifications/<id>/mark-read/      → Mark a specific notification as read
+4️⃣ PATCH /api/notifications/<id>/mark-unread/    → Revert notification to unread (if persistent)
+5️⃣ PATCH /api/notifications/mark-all-read/       → Mark all notifications as read
+6️⃣ DELETE /api/notifications/<id>/delete/        → Delete a specific notification (owner/admin)
 """
 
 urlpatterns = [
-    # 🔹 Fetch notifications for logged-in user
+    # ----------------------------------------------------
+    # 1️⃣ List all notifications (Unread/Read/All)
+    # ----------------------------------------------------
     path("", NotificationListView.as_view(), name="notifications-list"),
 
-    # 🔹 Mark a specific notification as read (PATCH)
+    # ----------------------------------------------------
+    # 2️⃣ Get unread count (for bell icon)
+    # ----------------------------------------------------
+    path("unread-count/", UnreadCountView.as_view(), name="notifications-unread-count"),
+
+    # ----------------------------------------------------
+    # 3️⃣ Mark single notification as read
+    # ----------------------------------------------------
     path("<int:pk>/mark-read/", MarkNotificationReadView.as_view(), name="notifications-mark-read"),
+
+    # ----------------------------------------------------
+    # 4️⃣ Mark single notification as unread (revert)
+    # ----------------------------------------------------
+    path("<int:pk>/mark-unread/", MarkNotificationUnreadView.as_view(), name="notifications-mark-unread"),
+
+    # ----------------------------------------------------
+    # 5️⃣ Mark all notifications as read
+    # ----------------------------------------------------
+    path("mark-all-read/", MarkAllNotificationsReadView.as_view(), name="notifications-mark-all-read"),
+
+    # ----------------------------------------------------
+    # 6️⃣ Delete a single notification
+    # ----------------------------------------------------
+    path("<int:pk>/delete/", NotificationDeleteView.as_view(), name="notifications-delete"),
 ]

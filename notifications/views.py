@@ -1,11 +1,11 @@
 # ===============================================
-# notifications/views.py (Updated — Production Ready)
+# notifications/views.py (Final — Production Ready & Frontend-Aligned)
 # ===============================================
 
 from rest_framework import generics, status
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
-from rest_framework.exceptions import PermissionDenied, NotFound
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.pagination import PageNumberPagination
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -15,9 +15,9 @@ from .models import Notification
 from .serializers import NotificationSerializer
 
 
-# -------------------------------------------------------
-# Pagination (frontend-friendly)
-# -------------------------------------------------------
+# ===============================================================
+# 🔹 Pagination (Frontend Friendly)
+# ===============================================================
 class NotificationPagination(PageNumberPagination):
     page_size = 10
     page_size_query_param = "page_size"
@@ -25,15 +25,16 @@ class NotificationPagination(PageNumberPagination):
 
 
 # ===============================================================
-# ✅ Notification List View (Unified for All Roles)
+# ✅ 1️⃣ Notification List View (All Roles)
 # ===============================================================
 class NotificationListView(generics.ListAPIView):
     """
     Fetch notifications for the logged-in user.
-    Supports query params:
-      - ?status=unread | read | all     (default: unread)
-      - ?auto_delete=true|false         (optional filter)
-      - pagination via ?page and ?page_size
+
+    Query Params:
+      - ?status=unread|read|all        (default: unread)
+      - ?auto_delete=true|false        (optional)
+      - Pagination: ?page=1&page_size=10
     """
     serializer_class = NotificationSerializer
     permission_classes = [IsAuthenticated]
@@ -42,22 +43,20 @@ class NotificationListView(generics.ListAPIView):
     def get_queryset(self):
         user = self.request.user
         status_filter = self.request.query_params.get("status", "unread").lower()
-        auto_delete_filter = self.request.query_params.get("auto_delete", None)
+        auto_delete_filter = self.request.query_params.get("auto_delete")
 
         qs = Notification.objects.filter(employee=user).select_related("department")
 
-        # Status filter
+        # Apply status filter
         if status_filter == "unread":
             qs = qs.filter(is_read=False)
         elif status_filter == "read":
             qs = qs.filter(is_read=True)
-        elif status_filter == "all":
-            pass
-        else:
+        elif status_filter != "all":
             qs = qs.filter(is_read=False)
 
-        # Optional auto-delete filter
-        if auto_delete_filter is not None:
+        # Apply optional auto-delete filter
+        if auto_delete_filter:
             if auto_delete_filter.lower() == "true":
                 qs = qs.filter(auto_delete=True)
             elif auto_delete_filter.lower() == "false":
@@ -69,21 +68,20 @@ class NotificationListView(generics.ListAPIView):
         queryset = self.get_queryset()
         paginated = self.paginate_queryset(queryset)
         serializer = self.get_serializer(paginated, many=True)
-        # Unread count for the full set (not only the page)
         unread_count = Notification.objects.filter(employee=request.user, is_read=False).count()
-        return self.get_paginated_response(
-            {
-                "total": queryset.count(),
-                "unread_count": unread_count,
-                "notifications": serializer.data,
-            }
-        )
+
+        return self.get_paginated_response({
+            "total_notifications": queryset.count(),
+            "unread_count": unread_count,
+            "notifications": serializer.data,
+        })
 
 
 # ===============================================================
-# ✅ Unread Count (quick endpoint used by header/badges)
+# ✅ 2️⃣ Unread Count View (Bell Icon Endpoint)
 # ===============================================================
 class UnreadCountView(generics.GenericAPIView):
+    """Return the unread notification count for the logged-in user."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -92,29 +90,25 @@ class UnreadCountView(generics.GenericAPIView):
 
 
 # ===============================================================
-# ✅ Mark single notification as read (or auto-delete)
+# ✅ 3️⃣ Mark Single Notification as Read
 # ===============================================================
 class MarkNotificationReadView(generics.GenericAPIView):
+    """Marks a single notification as read, with optional auto-delete."""
     permission_classes = [IsAuthenticated]
 
     def patch(self, request, pk):
         notification = get_object_or_404(Notification, pk=pk)
 
-        # Ownership check (admins may also operate if deliberately allowed)
-        if notification.employee != request.user and not request.user.is_staff and not request.user.is_superuser:
+        if notification.employee != request.user and not request.user.is_staff:
             raise PermissionDenied("You are not authorized to modify this notification.")
 
-        # Use model helper which honors auto_delete behavior
-        # mark_as_read will delete if auto_delete is True
         notification.mark_as_read(auto_commit=True)
 
-        # If object was auto-deleted, it will no longer exist in DB
         if notification.auto_delete:
             return Response(
                 {"message": "✅ Notification marked as read and auto-deleted.", "notification_id": pk},
                 status=status.HTTP_200_OK,
             )
-
         return Response(
             {"message": "✅ Notification marked as read.", "notification_id": pk},
             status=status.HTTP_200_OK,
@@ -122,18 +116,18 @@ class MarkNotificationReadView(generics.GenericAPIView):
 
 
 # ===============================================================
-# ✅ Mark single notification as unread (revert)
+# ✅ 4️⃣ Mark Notification as Unread (Revert)
 # ===============================================================
 class MarkNotificationUnreadView(generics.GenericAPIView):
+    """Reverts a persistent notification to unread."""
     permission_classes = [IsAuthenticated]
 
     def patch(self, request, pk):
         notification = get_object_or_404(Notification, pk=pk)
 
-        if notification.employee != request.user and not request.user.is_staff and not request.user.is_superuser:
+        if notification.employee != request.user and not request.user.is_staff:
             raise PermissionDenied("You are not authorized to modify this notification.")
 
-        # Only persistent notifications can be marked unread (auto-deleted ones would have been removed)
         if notification.auto_delete:
             return Response(
                 {"error": "Cannot mark auto-delete notifications as unread."},
@@ -141,13 +135,17 @@ class MarkNotificationUnreadView(generics.GenericAPIView):
             )
 
         notification.mark_as_unread()
-        return Response({"message": "✅ Notification marked as unread.", "notification_id": pk}, status=status.HTTP_200_OK)
+        return Response(
+            {"message": "✅ Notification marked as unread.", "notification_id": pk},
+            status=status.HTTP_200_OK,
+        )
 
 
 # ===============================================================
-# ✅ Bulk: Mark all unread notifications as read
+# ✅ 5️⃣ Mark All Notifications as Read (Bulk)
 # ===============================================================
 class MarkAllNotificationsReadView(generics.GenericAPIView):
+    """Marks all unread notifications for a user as read."""
     permission_classes = [IsAuthenticated]
 
     @transaction.atomic
@@ -156,33 +154,32 @@ class MarkAllNotificationsReadView(generics.GenericAPIView):
         unread_qs = Notification.objects.filter(employee=user, is_read=False)
 
         total_unread = unread_qs.count()
-        if total_unread == 0:
+        if not total_unread:
             return Response({"message": "No unread notifications."}, status=status.HTTP_200_OK)
 
-        # Separate auto-delete ones (delete) and persistent ones (bulk update)
         auto_delete_qs = unread_qs.filter(auto_delete=True)
         persistent_qs = unread_qs.filter(auto_delete=False)
 
         auto_deleted_count = auto_delete_qs.count()
         persistent_updated_count = persistent_qs.update(is_read=True, read_at=timezone.now())
 
-        # Delete auto-delete notifications in a single operation
-        if auto_delete_qs.exists():
+        if auto_deleted_count:
             auto_delete_qs.delete()
 
-        return Response(
-            {
-                "message": f"✅ Marked {persistent_updated_count} notifications as read and auto-deleted {auto_deleted_count} temporary notifications.",
-                "total_processed": persistent_updated_count + auto_deleted_count,
-            },
-            status=status.HTTP_200_OK,
-        )
+        return Response({
+            "message": (
+                f"✅ Marked {persistent_updated_count} notifications as read and "
+                f"auto-deleted {auto_deleted_count} temporary notifications."
+            ),
+            "total_processed": persistent_updated_count + auto_deleted_count,
+        }, status=status.HTTP_200_OK)
 
 
 # ===============================================================
-# ✅ Delete a single notification (owner or admin)
+# ✅ 6️⃣ Delete Notification (Single)
 # ===============================================================
 class NotificationDeleteView(generics.DestroyAPIView):
+    """Delete a single notification manually (Admin or Owner)."""
     permission_classes = [IsAuthenticated]
     queryset = Notification.objects.all()
     serializer_class = NotificationSerializer
@@ -191,8 +188,8 @@ class NotificationDeleteView(generics.DestroyAPIView):
     def destroy(self, request, *args, **kwargs):
         notification = self.get_object()
 
-        if notification.employee != request.user and not request.user.is_staff and not request.user.is_superuser:
+        if notification.employee != request.user and not request.user.is_staff:
             raise PermissionDenied("You are not authorized to delete this notification.")
 
         notification.delete()
-        return Response({"message": "✅ Notification deleted."}, status=status.HTTP_204_NO_CONTENT)
+        return Response({"message": "🗑️ Notification deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
