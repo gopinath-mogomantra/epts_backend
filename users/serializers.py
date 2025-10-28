@@ -1,396 +1,318 @@
 # ===========================================================
-# users/views.py ✅ Final Frontend-Aligned & Serializer-Compatible
+# users/serializers.py ✅ Final Frontend-Aligned & Production-Ready
 # Employee Performance Tracking System (EPTS)
 # ===========================================================
 
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
-from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
-from rest_framework import generics, status, filters
-from rest_framework.response import Response
-from rest_framework.views import APIView
-from rest_framework.decorators import api_view, permission_classes
-from django.contrib.auth import get_user_model
-from django.utils import timezone
+from rest_framework import serializers
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from django.contrib.auth import authenticate, get_user_model
 from django.db import transaction, models
-from django.utils.crypto import get_random_string
-from django.core.mail import send_mail
-from django.conf import settings
-from rest_framework.pagination import PageNumberPagination
+from django.utils import timezone
+import random
+import string
 import logging
+import re
+from employee.models import Department
 
-from employee.models import Employee, Department
-from .serializers import (
-    CustomTokenObtainPairSerializer,
-    RegisterSerializer,
-    ProfileSerializer,
-    ChangePasswordSerializer,
-)
-
-logger = logging.getLogger("users")
 User = get_user_model()
+logger = logging.getLogger("users")
+
 
 # ===========================================================
-# ✅ 1. LOGIN (Supports emp_id / username / email)
+# ✅ 1. LOGIN SERIALIZER (username / emp_id / email)
 # ===========================================================
-class ObtainTokenPairView(TokenObtainPairView):
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
-    POST /api/users/login/
-    Allows login via emp_id, username, or email.
-    Returns JWT tokens + user payload.
+    Allows login via username, emp_id, or email.
+    Implements:
+    - Case-insensitive lookup
+    - Account lock enforcement
+    - Failed login tracking
+    - Password change enforcement
+    - Returns user info with JWT
     """
-    serializer_class = CustomTokenObtainPairSerializer
-    permission_classes = [AllowAny]
 
-    def post(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        try:
-            serializer.is_valid(raise_exception=True)
-        except Exception as e:
-            logger.warning(f"Login failed: {str(e)}")
-            return Response(
-                {"status": "failed", "detail": str(e)},
-                status=status.HTTP_400_BAD_REQUEST
+    username_field = "username"
+    LOCK_DURATION_HOURS = 2
+    LOCK_THRESHOLD = 5
+
+    def validate(self, attrs):
+        login_input = attrs.get("username")
+        password = attrs.get("password")
+
+        if not login_input or not password:
+            raise serializers.ValidationError(
+                {"detail": "Both username (emp_id/username/email) and password are required."}
             )
 
-        data = serializer.validated_data
-        return Response(
-            {
-                "status": "success",
-                "message": "Login successful.",
-                "refresh": data.get("refresh"),
-                "access": data.get("access"),
-                "user": data.get("user"),
-            },
-            status=status.HTTP_200_OK,
-        )
+        # Find user by username, emp_id, or email (case-insensitive)
+        user = User.objects.filter(
+            models.Q(username__iexact=login_input)
+            | models.Q(emp_id__iexact=login_input)
+            | models.Q(email__iexact=login_input)
+        ).first()
+
+        if not user:
+            raise serializers.ValidationError({"detail": "Invalid username or password."})
+
+        # Handle account lockout
+        if user.account_locked:
+            if user.locked_at:
+                elapsed = timezone.now() - user.locked_at
+                remaining_seconds = max(0, self.LOCK_DURATION_HOURS * 3600 - elapsed.total_seconds())
+                if remaining_seconds > 0:
+                    remaining_minutes = int(remaining_seconds // 60) % 60
+                    remaining_hours = int(remaining_seconds // 3600)
+                    raise serializers.ValidationError({
+                        "detail": f"Account locked. Try again after {remaining_hours}h {remaining_minutes}m."
+                    })
+                else:
+                    user.unlock_account()
+
+        # Authenticate (Django expects username)
+        authenticated_user = authenticate(username=user.username, password=password)
+        if not authenticated_user:
+            user.increment_failed_attempts()
+            if user.account_locked:
+                raise serializers.ValidationError({
+                    "detail": f"Too many failed attempts. Account locked for {self.LOCK_DURATION_HOURS} hours."
+                })
+            remaining = max(0, self.LOCK_THRESHOLD - user.failed_login_attempts)
+            raise serializers.ValidationError({"detail": f"Invalid credentials. {remaining} attempt(s) left."})
+
+        # Reset failed attempts
+        user.reset_login_attempts()
+
+        # Enforce password change
+        if user.force_password_change:
+            raise serializers.ValidationError({
+                "force_password_change": True,
+                "detail": "Password change required before login."
+            })
+
+        # Generate JWT
+        data = super().validate({"username": user.username, "password": password})
+
+        # Add custom payload
+        data["user"] = {
+            "id": user.id,
+            "emp_id": user.emp_id,
+            "username": user.username,
+            "email": user.email,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "role": user.role,
+            "department": user.department.name if user.department else None,
+            "manager": user.manager.username if user.manager else None,
+            "status": user.status,
+            "is_verified": user.is_verified,
+            "is_active": user.is_active,
+        }
+        return data
+
+    @classmethod
+    def get_token(cls, user):
+        token = super().get_token(user)
+        token["emp_id"] = user.emp_id
+        token["role"] = user.role
+        return token
 
 
 # ===========================================================
-# ✅ 2. REFRESH TOKEN
+# ✅ 2. REGISTER SERIALIZER
 # ===========================================================
-class RefreshTokenView(TokenRefreshView):
-    """
-    POST /api/users/token/refresh/
-    Generates new access token using refresh token.
-    """
-    permission_classes = [AllowAny]
+class RegisterSerializer(serializers.ModelSerializer):
+    full_name = serializers.SerializerMethodField(read_only=True)
+    department_name = serializers.CharField(source="department.name", read_only=True)
+    temp_password = serializers.CharField(read_only=True)
 
+    department = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    manager = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
-# ===========================================================
-# ✅ 3. REGISTER USER (Admin / Manager)
-# ===========================================================
-class RegisterView(generics.CreateAPIView):
-    """
-    POST /api/users/register/
-    Allows Admin or Manager to register new users.
-    Automatically creates Employee record.
-    """
-    queryset = User.objects.all()
-    serializer_class = RegisterSerializer
-    permission_classes = [IsAuthenticated]
+    class Meta:
+        model = User
+        fields = [
+            "id",
+            "emp_id",
+            "username",
+            "email",
+            "first_name",
+            "last_name",
+            "full_name",
+            "department",
+            "department_name",
+            "manager",
+            "phone",
+            "role",
+            "status",
+            "joining_date",
+            "temp_password",
+        ]
+        read_only_fields = ["id", "emp_id", "temp_password"]
 
+    def get_full_name(self, obj):
+        return f"{obj.first_name or ''} {obj.last_name or ''}".strip()
+
+    # ---------------- VALIDATIONS ----------------
+    def validate_email(self, value):
+        if User.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError("Email already exists.")
+        return value
+
+    def validate_phone(self, value):
+        if value and User.objects.filter(phone=value).exists():
+            raise serializers.ValidationError("Phone number already exists.")
+        return value
+
+    def validate_role(self, value):
+        if value not in dict(User.ROLE_CHOICES):
+            raise serializers.ValidationError("Invalid role.")
+        return value
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        if request and hasattr(request, "user"):
+            if not request.user.is_admin() and not request.user.is_manager():
+                raise serializers.ValidationError(
+                    {"permission": "Only Admin or Manager can create users."}
+                )
+        return attrs
+
+    # ---------------- CREATE USER ----------------
     @transaction.atomic
-    def create(self, request, *args, **kwargs):
-        current_user = request.user
+    def create(self, validated_data):
+        dept_value = validated_data.pop("department", None)
+        manager_value = validated_data.pop("manager", None)
+        department_instance = None
+        manager_instance = None
 
-        # Permission check
-        if not hasattr(current_user, "role") or current_user.role not in ["Admin", "Manager"]:
-            return Response(
-                {"error": "Access denied. Only Admin or Manager can create users."},
-                status=status.HTTP_403_FORBIDDEN,
+        # Resolve department (id/code/name)
+        if dept_value:
+            if str(dept_value).isdigit():
+                department_instance = Department.objects.filter(id=int(dept_value)).first()
+            if not department_instance:
+                department_instance = Department.objects.filter(code__iexact=dept_value).first()
+            if not department_instance:
+                department_instance = Department.objects.filter(name__iexact=dept_value).first()
+            if not department_instance:
+                raise serializers.ValidationError({"department": f"No department found matching '{dept_value}'."})
+
+        # Resolve manager (emp_id/username)
+        if manager_value:
+            manager_instance = (
+                User.objects.filter(emp_id__iexact=manager_value).first()
+                or User.objects.filter(username__iexact=manager_value).first()
             )
+            if not manager_instance:
+                raise serializers.ValidationError({"manager": f"No manager found matching '{manager_value}'."})
 
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        # Generate emp_id (thread-safe)
+        with transaction.atomic():
+            last_user = User.objects.select_for_update().order_by("-id").first()
+            last_num = int(last_user.emp_id.replace("EMP", "")) if last_user and last_user.emp_id else 0
+            new_emp_id = f"EMP{last_num + 1:04d}"
 
-        email = serializer.validated_data.get("email")
-        if User.objects.filter(email__iexact=email).exists():
-            return Response({"error": "User with this email already exists."}, status=400)
+        # Generate secure temporary password
+        first_name = validated_data.get("first_name", "User").capitalize()
+        random_part = "".join(random.choices(string.ascii_letters + string.digits, k=4))
+        temp_password = f"{first_name}@{random_part}"
 
         # Create user
-        user = serializer.save()
-        if not user.joining_date:
-            user.joining_date = timezone.now().date()
-            user.save(update_fields=["joining_date"])
-
-        # Auto-create Employee record
-        dept_value = request.data.get("department")
-        department = None
-        if dept_value:
-            department = Department.objects.filter(
-                models.Q(id__iexact=dept_value)
-                | models.Q(code__iexact=dept_value)
-                | models.Q(name__iexact=dept_value)
-            ).first()
-
-        if not Employee.objects.filter(user=user).exists():
-            Employee.objects.create(
-                user=user,
-                emp_id=user.emp_id,
-                department=department,
-                joining_date=user.joining_date,
-                status=user.status,
-            )
-
-        # Send Email (Optional)
-        try:
-            send_mail(
-                subject="EPTS - Account Created",
-                message=(
-                    f"Hello {user.get_full_name()},\n\n"
-                    f"Your EPTS account has been created successfully.\n"
-                    f"Employee ID: {user.emp_id}\n"
-                    f"Temporary Password: {getattr(user, 'temp_password', 'N/A')}\n\n"
-                    f"Please log in and change your password immediately.\n\n"
-                    f"Regards,\nEPTS Admin Team"
-                ),
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[user.email],
-                fail_silently=True,
-            )
-        except Exception as e:
-            logger.warning(f"Email send failed for {user.emp_id}: {e}")
-
-        logger.info(f"User {user.emp_id} registered by {current_user.emp_id}")
-        return Response(
-            {
-                "message": "✅ User registered successfully.",
-                "user": ProfileSerializer(user).data,
-                "temp_password": getattr(user, "temp_password", None) if settings.DEBUG else None,
-            },
-            status=status.HTTP_201_CREATED,
+        user = User.objects.create_user(
+            emp_id=new_emp_id,
+            password=temp_password,
+            department=department_instance,
+            manager=manager_instance,
+            **validated_data,
         )
+        user.force_password_change = True
+        user.save(update_fields=["force_password_change"])
+
+        logger.info("✅ User %s registered with temp password %s", user.emp_id, temp_password)
+        user.temp_password = temp_password
+        return user
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        rep["temp_password"] = getattr(instance, "temp_password", None)
+        if instance.department:
+            rep["department"] = instance.department.name
+        if instance.manager:
+            rep["manager"] = instance.manager.username
+        return rep
 
 
 # ===========================================================
-# ✅ 4. CHANGE PASSWORD
+# ✅ 3. CHANGE PASSWORD SERIALIZER
 # ===========================================================
-class ChangePasswordView(APIView):
-    """
-    POST /api/users/change-password/
-    Allows authenticated user to change password.
-    """
-    permission_classes = [IsAuthenticated]
+class ChangePasswordSerializer(serializers.Serializer):
+    old_password = serializers.CharField(write_only=True, required=True)
+    new_password = serializers.CharField(write_only=True, required=True)
 
-    def post(self, request):
-        serializer = ChangePasswordSerializer(data=request.data, context={"request": request})
-        serializer.is_valid(raise_exception=True)
-        result = serializer.save()
-        logger.info(f"Password changed for {request.user.emp_id}")
-        return Response(result, status=200)
+    def validate_new_password(self, value):
+        """Strong password enforcement."""
+        if len(value) < 8:
+            raise serializers.ValidationError("Password must be at least 8 characters long.")
+        if not re.search(r"[A-Z]", value):
+            raise serializers.ValidationError("Password must include at least one uppercase letter.")
+        if not re.search(r"[a-z]", value):
+            raise serializers.ValidationError("Password must include at least one lowercase letter.")
+        if not re.search(r"\d", value):
+            raise serializers.ValidationError("Password must include at least one digit.")
+        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", value):
+            raise serializers.ValidationError("Password must include at least one special character.")
+        return value
 
+    def validate_old_password(self, value):
+        user = self.context["request"].user
+        if not user.check_password(value):
+            raise serializers.ValidationError("Old password is incorrect.")
+        return value
 
-# ===========================================================
-# ✅ 5. PROFILE (GET / PATCH)
-# ===========================================================
-class ProfileView(APIView):
-    """
-    GET /api/users/profile/
-    PATCH /api/users/profile/
-    Allows authenticated users to view or update their profile.
-    """
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        serializer = ProfileSerializer(request.user)
-        return Response(serializer.data, status=200)
-
-    def patch(self, request):
-        user = request.user
-        editable_fields = {"first_name", "last_name", "email", "phone"}
-        updates = {}
-
-        for field, value in request.data.items():
-            if field in editable_fields:
-                if field == "email" and User.objects.exclude(id=user.id).filter(email__iexact=value).exists():
-                    return Response({"error": "Email already exists."}, status=400)
-                if field == "phone" and value and User.objects.exclude(id=user.id).filter(phone=value).exists():
-                    return Response({"error": "Phone already exists."}, status=400)
-                updates[field] = value
-
-        for k, v in updates.items():
-            setattr(user, k, v)
-
-        if updates:
-            user.save(update_fields=list(updates.keys()))
-            logger.info(f"Profile updated by {user.emp_id}")
-
-        return Response(
-            {"message": "✅ Profile updated successfully.", "user": ProfileSerializer(user).data},
-            status=200,
-        )
+    def save(self, **kwargs):
+        user = self.context["request"].user
+        user.set_password(self.validated_data["new_password"])
+        user.force_password_change = False
+        user.save(update_fields=["password", "force_password_change"])
+        logger.info("Password changed successfully for user %s", user.emp_id)
+        return {"message": "Password changed successfully!"}
 
 
 # ===========================================================
-# ✅ 6. ROLE LIST
+# ✅ 4. PROFILE SERIALIZER
 # ===========================================================
-class RoleListView(APIView):
-    permission_classes = [AllowAny]
+class ProfileSerializer(serializers.ModelSerializer):
+    department_name = serializers.CharField(source="department.name", read_only=True)
+    full_name = serializers.SerializerMethodField(read_only=True)
+    joining_date = serializers.SerializerMethodField(read_only=True)
+    manager = serializers.CharField(source="manager.username", read_only=True)
 
-    def get(self, request):
-        roles = [role for role, _ in User.ROLE_CHOICES]
-        return Response({"roles": roles}, status=200)
+    class Meta:
+        model = User
+        fields = [
+            "id",
+            "emp_id",
+            "username",
+            "email",
+            "first_name",
+            "last_name",
+            "full_name",
+            "role",
+            "department",
+            "department_name",
+            "manager",
+            "phone",
+            "status",
+            "joining_date",
+            "is_verified",
+            "is_active",
+        ]
+        read_only_fields = ["id", "emp_id", "joining_date", "is_verified", "is_active"]
 
+    def get_full_name(self, obj):
+        return f"{obj.first_name or ''} {obj.last_name or ''}".strip()
 
-# ===========================================================
-# ✅ 7. USER LIST (Admin)
-# ===========================================================
-class UserPagination(PageNumberPagination):
-    page_size = 20
-
-
-class UserListView(generics.ListAPIView):
-    queryset = User.objects.select_related("department", "manager").all().order_by("emp_id")
-    serializer_class = ProfileSerializer
-    permission_classes = [IsAuthenticated]
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ["username", "emp_id", "email", "first_name", "last_name", "status"]
-    ordering_fields = ["emp_id", "username", "joining_date"]
-    pagination_class = UserPagination
-
-    def get_queryset(self):
-        qs = super().get_queryset()
-        status_param = self.request.query_params.get("status")
-        dept_param = self.request.query_params.get("department")
-        emp_id_param = self.request.query_params.get("emp_id")
-
-        if status_param:
-            qs = qs.filter(status__iexact=status_param)
-        if dept_param:
-            qs = qs.filter(department__name__icontains=dept_param)
-        if emp_id_param:
-            qs = qs.filter(emp_id__iexact=emp_id_param)
-        return qs
-
-    def list(self, request, *args, **kwargs):
-        if not (hasattr(request.user, "role") and request.user.role == "Admin"):
-            return Response({"error": "Access denied. Admins only."}, status=403)
-        return super().list(request, *args, **kwargs)
-
-
-# ===========================================================
-# ✅ 8. ADMIN RESET PASSWORD
-# ===========================================================
-@api_view(["POST"])
-@permission_classes([IsAdminUser])
-@transaction.atomic
-def reset_password(request):
-    emp_id = request.data.get("emp_id")
-    if not emp_id:
-        return Response({"error": "emp_id is required."}, status=400)
-
-    try:
-        user = User.objects.get(emp_id=emp_id)
-    except User.DoesNotExist:
-        return Response({"error": "User not found."}, status=404)
-
-    new_password = get_random_string(
-        length=10,
-        allowed_chars="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*",
-    )
-
-    user.set_password(new_password)
-    user.force_password_change = True
-    user.save(update_fields=["password", "force_password_change"])
-
-    try:
-        send_mail(
-            subject="EPTS Password Reset Notification",
-            message=(
-                f"Hello {user.get_full_name()},\n\n"
-                f"Your password has been reset by Admin ({request.user.emp_id}).\n"
-                f"Temporary Password: {new_password}\n\n"
-                f"Please log in and change your password immediately.\n\n"
-                f"Regards,\nEPTS Admin Team"
-            ),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            fail_silently=True,
-        )
-    except Exception as e:
-        logger.warning(f"Email send failed for {user.emp_id}: {e}")
-
-    logger.info(f"Password reset by Admin {request.user.emp_id} for user {user.emp_id}")
-    response_data = {
-        "message": f"✅ Password reset successfully for {user.emp_id}.",
-        "username": user.username,
-        "force_password_change": True,
-    }
-    if settings.DEBUG:
-        response_data["temp_password"] = new_password
-    return Response(response_data, status=200)
-
-
-# ===========================================================
-# ✅ 9. USER DETAIL (Admin CRUD)
-# ===========================================================
-class UserDetailView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get_object(self, emp_id):
-        return User.objects.filter(emp_id=emp_id).first()
-
-    def get(self, request, emp_id):
-        user = self.get_object(emp_id)
-        if not user:
-            return Response({"error": "User not found."}, status=404)
-        return Response(ProfileSerializer(user).data, status=200)
-
-    @transaction.atomic
-    def patch(self, request, emp_id):
-        admin = request.user
-        if not (hasattr(admin, "role") and admin.role == "Admin"):
-            return Response({"error": "Access denied. Admins only."}, status=403)
-
-        user = self.get_object(emp_id)
-        if not user:
-            return Response({"error": "User not found."}, status=404)
-
-        editable_fields = ["first_name", "last_name", "email", "phone", "is_verified", "status", "department", "manager"]
-        updates = {f: v for f, v in request.data.items() if f in editable_fields}
-
-        # Resolve manager if updated
-        if "manager" in updates:
-            mgr_val = updates.pop("manager")
-            manager_obj = (
-                User.objects.filter(emp_id__iexact=mgr_val).first()
-                or User.objects.filter(username__iexact=mgr_val).first()
-            )
-            if not manager_obj:
-                return Response({"error": f"Manager '{mgr_val}' not found."}, status=400)
-            updates["manager"] = manager_obj
-
-        for k, v in updates.items():
-            setattr(user, k, v)
-        if updates:
-            user.save(update_fields=list(updates.keys()))
-            logger.info(f"User {emp_id} updated by Admin {admin.emp_id}")
-
-        return Response(
-            {"message": "✅ User updated successfully.", "user": ProfileSerializer(user).data},
-            status=200,
-        )
-
-    @transaction.atomic
-    def delete(self, request, emp_id):
-        admin = request.user
-        if not (hasattr(admin, "role") and admin.role == "Admin"):
-            return Response({"error": "Access denied. Admins only."}, status=403)
-
-        user = self.get_object(emp_id)
-        if not user:
-            return Response({"error": "User not found."}, status=404)
-        if user == admin:
-            return Response({"error": "You cannot deactivate your own account."}, status=400)
-        if hasattr(user, "role") and user.role == "Admin":
-            return Response({"error": "Cannot deactivate another admin account."}, status=400)
-
-        user.is_active = False
-        user.status = "Inactive"
-        user.save(update_fields=["is_active", "status"])
-        logger.warning(f"User {emp_id} deactivated by Admin {admin.emp_id}")
-
-        return Response(
-            {"message": f"✅ User '{emp_id}' deactivated successfully.", "status": user.status},
-            status=200,
-        )
+    def get_joining_date(self, obj):
+        if obj.joining_date:
+            return obj.joining_date.date() if hasattr(obj.joining_date, "date") else obj.joining_date
+        return None

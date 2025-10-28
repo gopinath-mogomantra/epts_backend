@@ -9,9 +9,10 @@ from rest_framework import generics, status, filters
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.pagination import PageNumberPagination
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from django.db import transaction
+from django.db import transaction, models
 from django.utils.crypto import get_random_string
 from django.core.mail import send_mail
 from django.conf import settings
@@ -28,13 +29,14 @@ from .serializers import (
 logger = logging.getLogger("users")
 User = get_user_model()
 
+
 # ===========================================================
-# ✅ 1. LOGIN (Using CustomTokenObtainPairSerializer)
+# ✅ 1. LOGIN (Supports username / emp_id / email)
 # ===========================================================
 class ObtainTokenPairView(TokenObtainPairView):
     """
     POST /api/users/login/
-    Handles login via emp_id or username.
+    Handles login via emp_id, username, or email.
     Returns JWT tokens + user payload.
     """
     serializer_class = CustomTokenObtainPairSerializer
@@ -45,7 +47,7 @@ class ObtainTokenPairView(TokenObtainPairView):
         try:
             serializer.is_valid(raise_exception=True)
         except Exception as e:
-            logger.warning(f"Login failed: {str(e)}")
+            logger.warning(f"Login failed: {e}")
             return Response(
                 {"detail": str(e), "status": "failed"},
                 status=status.HTTP_400_BAD_REQUEST
@@ -70,7 +72,7 @@ class ObtainTokenPairView(TokenObtainPairView):
 class RefreshTokenView(TokenRefreshView):
     """
     POST /api/users/token/refresh/
-    Returns new access token from refresh token.
+    Returns new access token using refresh token.
     """
     permission_classes = [AllowAny]
 
@@ -82,7 +84,7 @@ class RegisterView(generics.CreateAPIView):
     """
     POST /api/users/register/
     Allows Admin or Manager to register new users.
-    Automatically creates Employee record.
+    Also creates a corresponding Employee record.
     """
     queryset = User.objects.all()
     serializer_class = RegisterSerializer
@@ -92,8 +94,8 @@ class RegisterView(generics.CreateAPIView):
     def create(self, request, *args, **kwargs):
         current_user = request.user
 
-        # Permission check
-        if not (hasattr(current_user, "role") and current_user.role in ["Admin", "Manager"]):
+        # Role-based access control
+        if not (current_user.is_admin() or current_user.is_manager()):
             return Response(
                 {"error": "Access denied. Only Admin or Manager can create users."},
                 status=status.HTTP_403_FORBIDDEN
@@ -131,7 +133,7 @@ class RegisterView(generics.CreateAPIView):
                 status=user.status
             )
 
-        # Send Email (Optional)
+        # Send email notification (optional)
         try:
             send_mail(
                 subject="EPTS - Account Created",
@@ -182,10 +184,12 @@ class ProfileView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        """Return logged-in user's profile."""
         serializer = ProfileSerializer(request.user)
         return Response(serializer.data, status=200)
 
     def patch(self, request):
+        """Allow user to update limited profile fields."""
         user = request.user
         editable_fields = {"first_name", "last_name", "email", "phone"}
         updates = {}
@@ -218,15 +222,14 @@ class RoleListView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
+        """Return list of available user roles."""
         roles = [role for role, _ in User.ROLE_CHOICES]
         return Response({"roles": roles}, status=200)
 
 
 # ===========================================================
-# ✅ 7. USER LIST (Admin)
+# ✅ 7. USER LIST (Admin Only)
 # ===========================================================
-from rest_framework.pagination import PageNumberPagination
-
 class UserPagination(PageNumberPagination):
     page_size = 20
 
@@ -247,7 +250,7 @@ class UserListView(generics.ListAPIView):
         emp_id_param = self.request.query_params.get("emp_id")
 
         if status_param:
-            qs = qs.filter(status__iexact=status_param)
+            qs = qs.filter(is_active=(status_param.lower() == "active"))
         if dept_param:
             qs = qs.filter(department__name__icontains=dept_param)
         if emp_id_param:
@@ -255,7 +258,7 @@ class UserListView(generics.ListAPIView):
         return qs
 
     def list(self, request, *args, **kwargs):
-        if not (hasattr(request.user, "role") and request.user.role == "Admin"):
+        if not request.user.is_admin():
             return Response({"error": "Access denied. Admins only."}, status=403)
         return super().list(request, *args, **kwargs)
 
@@ -285,6 +288,7 @@ def reset_password(request):
     user.force_password_change = True
     user.save(update_fields=["password", "force_password_change"])
 
+    # Email notification
     try:
         send_mail(
             subject="EPTS Password Reset Notification",
@@ -323,6 +327,7 @@ class UserDetailView(APIView):
         return User.objects.filter(emp_id=emp_id).first()
 
     def get(self, request, emp_id):
+        """Fetch single user details by emp_id."""
         user = self.get_object(emp_id)
         if not user:
             return Response({"error": "User not found."}, status=404)
@@ -330,15 +335,16 @@ class UserDetailView(APIView):
 
     @transaction.atomic
     def patch(self, request, emp_id):
+        """Update user details (Admin only)."""
         admin = request.user
-        if not (hasattr(admin, "role") and admin.role == "Admin"):
+        if not admin.is_admin():
             return Response({"error": "Access denied. Admins only."}, status=403)
 
         user = self.get_object(emp_id)
         if not user:
             return Response({"error": "User not found."}, status=404)
 
-        editable_fields = ["first_name", "last_name", "email", "phone", "is_verified", "status", "department", "manager"]
+        editable_fields = ["first_name", "last_name", "email", "phone", "is_verified", "is_active", "department", "manager"]
         updates = {f: v for f, v in request.data.items() if f in editable_fields}
 
         # Resolve manager
@@ -354,6 +360,7 @@ class UserDetailView(APIView):
 
         for k, v in updates.items():
             setattr(user, k, v)
+
         if updates:
             user.save(update_fields=list(updates.keys()))
             logger.info(f"User {emp_id} updated by Admin {admin.emp_id}")
@@ -365,8 +372,9 @@ class UserDetailView(APIView):
 
     @transaction.atomic
     def delete(self, request, emp_id):
+        """Deactivate a user (soft delete)."""
         admin = request.user
-        if not (hasattr(admin, "role") and admin.role == "Admin"):
+        if not admin.is_admin():
             return Response({"error": "Access denied. Admins only."}, status=403)
 
         user = self.get_object(emp_id)
@@ -374,15 +382,14 @@ class UserDetailView(APIView):
             return Response({"error": "User not found."}, status=404)
         if user == admin:
             return Response({"error": "You cannot deactivate your own account."}, status=400)
-        if hasattr(user, "role") and user.role == "Admin":
-            return Response({"error": "Cannot deactivate another admin account."}, status=400)
+        if user.role == "Admin":
+            return Response({"error": "Cannot deactivate another Admin account."}, status=400)
 
         user.is_active = False
-        user.status = "Inactive"
-        user.save(update_fields=["is_active", "status"])
+        user.save(update_fields=["is_active"])
         logger.warning(f"User {emp_id} deactivated by Admin {admin.emp_id}")
 
         return Response(
-            {"message": f"✅ User '{emp_id}' deactivated successfully.", "status": user.status},
+            {"message": f"✅ User '{emp_id}' deactivated successfully.", "status": "Inactive"},
             status=200,
         )
