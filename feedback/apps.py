@@ -1,15 +1,13 @@
-# ===============================================
-# feedback/apps.py (Final Verified Version)
-# ===============================================
-# Defines the configuration for the 'feedback' app.
-# Loaded automatically when included in INSTALLED_APPS.
-# ===============================================
+# ===========================================================
+# feedback/apps.py ✅
+# Ensures signal registration on app load
+# ===========================================================
 
 from django.apps import AppConfig
 
-
 class FeedbackConfig(AppConfig):
-    """AppConfig for the Feedback module (General, Manager, and Client Feedback)."""
-    default_auto_field = "django.db.models.BigAutoField"
-    name = "feedback"
-    verbose_name = "Employee Feedback Management"
+    default_auto_field = 'django.db.models.BigAutoField'
+    name = 'feedback'
+
+    def ready(self):
+        import feedback.signals  # Registers signal handlers safely

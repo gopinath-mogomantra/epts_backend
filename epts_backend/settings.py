@@ -42,9 +42,9 @@ INSTALLED_APPS = [
     "users",
     "employee",
     "performance",
-    "feedback",
     "reports",
     "notifications",
+    'feedback.apps.FeedbackConfig',
 ]
 
 # -------------------------------------------------------------------
