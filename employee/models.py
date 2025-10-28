@@ -13,16 +13,12 @@ User = settings.AUTH_USER_MODEL
 # 🔹 Department Model
 # ===========================================================
 class Department(models.Model):
-    """
-    Represents organizational departments.
-    Used in both Employee and Performance modules.
-    """
+    """Represents organizational departments."""
 
     code = models.CharField(max_length=10, unique=True, help_text="Short department code (e.g., ENG01)")
     name = models.CharField(max_length=100, unique=True, help_text="Department name (e.g., Engineering)")
     description = models.TextField(blank=True, null=True, help_text="Optional department description.")
-
-    employee_count = models.PositiveIntegerField(default=0, help_text="Total active employees in this department.")
+    employee_count = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -40,7 +36,6 @@ class Department(models.Model):
         return f"{self.name} ({self.code})"
 
     def clean(self):
-        """Ensure valid code format."""
         if not self.code.isalnum():
             raise ValidationError({"code": "Department code must be alphanumeric."})
 
@@ -49,10 +44,7 @@ class Department(models.Model):
 # 🔹 Employee Model
 # ===========================================================
 class Employee(models.Model):
-    """
-    Represents employee records within the organization.
-    Linked to Django's User model (One-to-One).
-    """
+    """Represents employee records linked to the User model."""
 
     STATUS_CHOICES = [
         ("Active", "Active"),
@@ -73,14 +65,8 @@ class Employee(models.Model):
         help_text="Linked Django User account."
     )
 
-    emp_id = models.CharField(
-        max_length=20,
-        unique=True,
-        help_text="Unique Employee ID (e.g., EMP1001)."
-    )
-
     department = models.ForeignKey(
-        Department,
+        "Department",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -106,7 +92,6 @@ class Employee(models.Model):
 
     joining_date = models.DateField(default=timezone.now)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="Active")
-
     contact_number = models.CharField(max_length=15, blank=True, null=True)
     location = models.CharField(max_length=100, blank=True, null=True)
     designation = models.CharField(max_length=100, blank=True, null=True)
@@ -115,25 +100,27 @@ class Employee(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["emp_id"]
+        ordering = ["user__emp_id"]
         verbose_name = "Employee"
         verbose_name_plural = "Employees"
         indexes = [
-            models.Index(fields=["emp_id"]),
-            models.Index(fields=["department"]),
             models.Index(fields=["status"]),
+            models.Index(fields=["department"]),
         ]
+
+    # -----------------------------------------------------------
+    # ✅ Property to reference User.emp_id
+    # -----------------------------------------------------------
+    @property
+    def emp_id(self):
+        return getattr(self.user, "emp_id", None)
 
     # -----------------------------------------------------------
     # ✅ Validation
     # -----------------------------------------------------------
     def clean(self):
-        """Custom validation for Employee creation."""
-        if not self.emp_id:
-            raise ValidationError({"emp_id": "Employee ID cannot be empty."})
-
-        if not self.user.email:
-            raise ValidationError({"user": "User email cannot be empty."})
+        if not self.user or not self.user.email:
+            raise ValidationError({"user": "Linked User must have a valid email."})
 
         if Employee.objects.exclude(id=self.id).filter(user__email=self.user.email).exists():
             raise ValidationError({"user": "An employee with this email already exists."})
@@ -145,13 +132,9 @@ class Employee(models.Model):
     # ✅ Save Override
     # -----------------------------------------------------------
     def save(self, *args, **kwargs):
-        """Ensure consistency in department and role assignments."""
         self.full_clean()
-
-        # Enforce that only Managers can have team members
         if self.manager and self.manager.role != "Manager":
             raise ValidationError({"manager": "Assigned manager must have role 'Manager'."})
-
         super().save(*args, **kwargs)
 
     # -----------------------------------------------------------
@@ -159,7 +142,7 @@ class Employee(models.Model):
     # -----------------------------------------------------------
     def __str__(self):
         full_name = f"{self.user.first_name} {self.user.last_name}".strip()
-        return f"{self.emp_id} - {full_name or self.user.username}"
+        return f"{self.emp_id or '-'} - {full_name or self.user.username}"
 
     def get_full_name(self):
         return f"{self.user.first_name} {self.user.last_name}".strip()
@@ -168,5 +151,4 @@ class Employee(models.Model):
         return self.department.name if self.department else "-"
 
     def get_role_display_name(self):
-        """Returns a readable role name."""
         return dict(self.ROLE_CHOICES).get(self.role, "Employee")

@@ -1,10 +1,10 @@
 # ===============================================
-# employee/admin.py (Final Verified — Admin & Frontend Ready)
+# employee/admin.py (Final — Fixed & Frontend Ready)
 # ===============================================
 # Django Admin configuration for Employee and Department models.
 # Features:
-# ✅ Department management with real-time employee count
-# ✅ Employee admin with linked user info (emp_id, email, role, dept)
+# ✅ Department management with live employee count
+# ✅ Employee admin linked with User info (emp_id, email, role, dept)
 # ✅ Inline search, filters, role badges, and status color coding
 # ===============================================
 
@@ -34,9 +34,6 @@ class DepartmentAdmin(admin.ModelAdmin):
     ordering = ("name",)
     readonly_fields = ("created_at", "updated_at", "employee_count")
 
-    # --------------------------------------------
-    # Helper Display Methods
-    # --------------------------------------------
     def colored_status(self, obj):
         """Show green if active, red if inactive."""
         color = "green" if obj.is_active else "red"
@@ -62,7 +59,7 @@ class EmployeeAdmin(admin.ModelAdmin):
     """
 
     list_display = (
-        "emp_id",
+        "get_emp_id",
         "get_full_name",
         "get_email",
         "department",
@@ -72,21 +69,26 @@ class EmployeeAdmin(admin.ModelAdmin):
         "joining_date",
     )
     search_fields = (
-        "emp_id",
+        "user__emp_id",
         "user__first_name",
         "user__last_name",
         "user__email",
         "designation",
     )
     list_filter = ("department", "role", "status", "joining_date")
-    ordering = ("emp_id",)
+    ordering = ("user__emp_id",)
     readonly_fields = ("created_at", "updated_at")
 
     # --------------------------------------------
     # Helper Display Methods
     # --------------------------------------------
+    def get_emp_id(self, obj):
+        """Display Employee ID from linked User."""
+        return getattr(obj.user, "emp_id", "-")
+    get_emp_id.short_description = "Employee ID"
+
     def get_full_name(self, obj):
-        """Return the full name of the employee (from linked User)."""
+        """Return full name from linked User."""
         if obj.user:
             full_name = f"{obj.user.first_name} {obj.user.last_name}".strip()
             return full_name or obj.user.username
@@ -122,13 +124,8 @@ class EmployeeAdmin(admin.ModelAdmin):
     def save_model(self, request, obj, form, change):
         """Custom save logic with admin audit logging."""
         super().save_model(request, obj, form, change)
+        emp_id = getattr(obj.user, "emp_id", "N/A")
         if change:
-            self.message_user(
-                request,
-                f"✅ Employee '{obj.emp_id}' details updated successfully.",
-            )
+            self.message_user(request, f"✅ Employee '{emp_id}' updated successfully.")
         else:
-            self.message_user(
-                request,
-                f"✅ Employee '{obj.emp_id}' added successfully.",
-            )
+            self.message_user(request, f"✅ Employee '{emp_id}' added successfully.")
