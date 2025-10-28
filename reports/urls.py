@@ -8,6 +8,7 @@
 # 4️⃣ Department-wise weekly report
 # 5️⃣ Employee performance history
 # 6️⃣ Weekly CSV export
+# 7️⃣ Print Performance Report (PDF Export)
 # ===============================================
 
 from django.urls import path
@@ -18,6 +19,7 @@ from .views import (
     DepartmentReportView,
     EmployeeHistoryView,
     ExportWeeklyCSVView,
+    PrintPerformanceReportView,  # ✅ newly added import
 )
 
 app_name = "reports"
@@ -62,4 +64,10 @@ urlpatterns = [
     # Example: /api/reports/export/weekly-csv/?week=43&year=2025
     # ----------------------------------------------------
     path("export/weekly-csv/", ExportWeeklyCSVView.as_view(), name="export-weekly-csv"),
+
+    # ----------------------------------------------------
+    # 7️⃣ Print Performance Report (PDF Export)
+    # Example: /api/reports/print/EMP3005/?week=2025-W43
+    # ----------------------------------------------------
+    path("print/<str:emp_id>/", PrintPerformanceReportView.as_view(), name="report-print"),
 ]

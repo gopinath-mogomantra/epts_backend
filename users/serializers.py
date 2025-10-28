@@ -1,5 +1,5 @@
 # ===========================================================
-# users/serializers.py (Final — Department Flexible, Stable)
+# users/serializers.py (Frontend-Aligned Final Version)
 # ===========================================================
 
 from rest_framework import serializers
@@ -9,6 +9,7 @@ from django.db import transaction
 import random
 import string
 import logging
+import re
 
 from employee.models import Department
 
@@ -17,11 +18,11 @@ logger = logging.getLogger("users")
 
 
 # ===========================================================
-# ✅ LOGIN SERIALIZER (Custom JWT)
+# ✅ LOGIN SERIALIZER
 # ===========================================================
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
-    Handles login via emp_id or username.
+    Handles login using emp_id or username.
     """
 
     username_field = "username"
@@ -30,8 +31,8 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         login_input = attrs.get("username")
         password = attrs.get("password")
 
+        # Resolve user by emp_id or username
         user = None
-        # Login via emp_id or username
         if User.objects.filter(emp_id__iexact=login_input).exists():
             user = User.objects.get(emp_id__iexact=login_input)
         elif User.objects.filter(username__iexact=login_input).exists():
@@ -40,7 +41,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         if not user:
             raise serializers.ValidationError({"detail": "Invalid credentials."})
 
-        # Check account lock
+        # Account lock handling
         if user.account_locked:
             remaining = user.lock_remaining_time()
             if remaining:
@@ -50,7 +51,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             else:
                 user.unlock_account()
 
-        # Authenticate
+        # Authenticate with emp_id as username field
         authenticated_user = authenticate(username=user.emp_id, password=password)
         if not authenticated_user:
             user.increment_failed_attempts()
@@ -63,14 +64,14 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
         user.reset_login_attempts()
 
-        # Force password change check
+        # Password change enforcement
         if getattr(user, "force_password_change", False):
             raise serializers.ValidationError({
                 "force_password_change": True,
                 "detail": "Password change required before login."
             })
 
-        # JWT token
+        # JWT data
         data = super().validate({"username": user.emp_id, "password": password})
         data["user"] = {
             "id": user.id,
@@ -81,6 +82,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             "last_name": user.last_name,
             "role": user.role,
             "department": user.department.name if user.department else None,
+            "manager": user.manager.username if user.manager else None,
             "status": user.status,
             "is_verified": user.is_verified,
             "is_active": user.is_active,
@@ -89,15 +91,15 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 
 # ===========================================================
-# ✅ REGISTER SERIALIZER (Flexible Department)
+# ✅ REGISTER SERIALIZER
 # ===========================================================
 class RegisterSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField(read_only=True)
     department_name = serializers.CharField(source="department.name", read_only=True)
     temp_password = serializers.CharField(read_only=True)
 
-    # Department now accepts ID, code, or name
     department = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    manager = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     class Meta:
         model = User
@@ -111,6 +113,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             "full_name",
             "department",
             "department_name",
+            "manager",
             "phone",
             "role",
             "status",
@@ -122,6 +125,7 @@ class RegisterSerializer(serializers.ModelSerializer):
     def get_full_name(self, obj):
         return f"{obj.first_name or ''} {obj.last_name or ''}".strip()
 
+    # --------------- VALIDATIONS ---------------
     def validate_email(self, value):
         if User.objects.filter(email__iexact=value).exists():
             raise serializers.ValidationError("Email already exists.")
@@ -137,11 +141,6 @@ class RegisterSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Invalid role.")
         return value
 
-    def validate_status(self, value):
-        if value not in dict(User.STATUS_CHOICES):
-            raise serializers.ValidationError("Invalid status.")
-        return value
-
     def validate(self, attrs):
         request = self.context.get("request")
         if request and hasattr(request, "user"):
@@ -151,13 +150,13 @@ class RegisterSerializer(serializers.ModelSerializer):
                 )
         return attrs
 
-    # =======================================================
-    # ✅ CREATE USER (Atomic + Flexible Dept)
-    # =======================================================
+    # --------------- CREATE USER ---------------
     @transaction.atomic
     def create(self, validated_data):
         dept_value = validated_data.pop("department", None)
+        manager_value = validated_data.pop("manager", None)
         department_instance = None
+        manager_instance = None
 
         # Resolve department (id/code/name)
         if dept_value:
@@ -170,21 +169,30 @@ class RegisterSerializer(serializers.ModelSerializer):
             if not department_instance:
                 raise serializers.ValidationError({"department": f"No department found matching '{dept_value}'."})
 
+        # Resolve manager (emp_id/username)
+        if manager_value:
+            manager_instance = (
+                User.objects.filter(emp_id__iexact=manager_value).first()
+                or User.objects.filter(username__iexact=manager_value).first()
+            )
+            if not manager_instance:
+                raise serializers.ValidationError({"manager": f"No manager found matching '{manager_value}'."})
+
         # Auto-generate emp_id
         last_user = User.objects.select_for_update().order_by("-id").first()
         last_num = int(last_user.emp_id.replace("EMP", "")) if last_user and last_user.emp_id else 0
         new_emp_id = f"EMP{last_num + 1:04d}"
 
-        # Temporary password
+        # Generate temporary password
         first_name = validated_data.get("first_name", "User").capitalize()
         random_part = "".join(random.choices(string.ascii_letters + string.digits, k=4))
         temp_password = f"{first_name}@{random_part}"
 
-        # Create user
         user = User.objects.create_user(
             emp_id=new_emp_id,
             password=temp_password,
             department=department_instance,
+            manager=manager_instance,
             **validated_data,
         )
         user.force_password_change = True
@@ -199,6 +207,8 @@ class RegisterSerializer(serializers.ModelSerializer):
         rep["temp_password"] = getattr(instance, "temp_password", None)
         if instance.department:
             rep["department"] = instance.department.code or instance.department.name
+        if instance.manager:
+            rep["manager"] = instance.manager.username
         return rep
 
 
@@ -210,8 +220,6 @@ class ChangePasswordSerializer(serializers.Serializer):
     new_password = serializers.CharField(write_only=True, required=True)
 
     def validate_new_password(self, value):
-        """Strong password policy"""
-        import re
         if len(value) < 8:
             raise serializers.ValidationError("Password must be at least 8 characters long.")
         if not re.search(r"[A-Z]", value):
@@ -246,6 +254,7 @@ class ProfileSerializer(serializers.ModelSerializer):
     department_name = serializers.CharField(source="department.name", read_only=True)
     full_name = serializers.SerializerMethodField(read_only=True)
     joining_date = serializers.SerializerMethodField(read_only=True)
+    manager = serializers.CharField(source="manager.username", read_only=True)
 
     class Meta:
         model = User
@@ -260,6 +269,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             "role",
             "department",
             "department_name",
+            "manager",
             "phone",
             "status",
             "joining_date",

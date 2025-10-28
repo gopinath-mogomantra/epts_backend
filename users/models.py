@@ -1,215 +1,220 @@
-# users/models.py
 # ===========================================================
-# Production-ready User model (Custom user with emp_id)
-# - Uses a dedicated UserManager
-# - Emp_id generation (EMP0001 style) with caveats documented
-# - Account lockout / unlock logic
-# - Field validators, indexes, and meta options
+# users/models.py  ✅ Frontend-Aligned + Production-Ready
+# Employee Performance Tracking System (EPTS)
 # ===========================================================
 
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
 from django.db import models, transaction
+from django.db.models import Max
 from django.utils import timezone
 from django.core.validators import RegexValidator
-from django.utils.crypto import get_random_string
 from django.core.exceptions import ValidationError
-import logging
+from django.utils.crypto import get_random_string
+from datetime import timedelta, datetime
+import uuid
+import os
 
-logger = logging.getLogger(__name__)
+
+# ===========================================================
+# PASSWORD HISTORY MODEL
+# ===========================================================
+class PasswordHistory(models.Model):
+    """
+    Track last 5 passwords to prevent reuse.
+    """
+    user = models.ForeignKey(
+        'User',
+        on_delete=models.CASCADE,
+        related_name='password_history'
+    )
+    password_hash = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = "Password History"
+        verbose_name_plural = "Password Histories"
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} - {self.created_at.strftime('%Y-%m-%d')}"
+
+    @classmethod
+    def add_password(cls, user, password_hash):
+        """Store password hash, keep only latest 5."""
+        cls.objects.create(user=user, password_hash=password_hash)
+        old = cls.objects.filter(user=user)[5:]
+        if old:
+            cls.objects.filter(id__in=[p.id for p in old]).delete()
 
 
-# -----------------------------------------------------------
+# ===========================================================
 # USER MANAGER
-# -----------------------------------------------------------
+# ===========================================================
 class UserManager(BaseUserManager):
     """
-    Custom manager for User.
-
-    Responsibilities:
-    - Generate sequential emp_id (EMP0001, EMP0002, ...)
-      NOTE: This naive generator can suffer race conditions under heavy concurrency.
-      See migration notes below for a safer production approach (DB-backed sequence or locking table).
-    - Create users / superusers
+    Custom manager for User model.
+    Handles auto emp_id and secure password creation.
     """
 
-    def _generate_emp_id_candidate(self):
-        """
-        Generate next sequential Employee ID candidate based on highest numeric suffix seen.
-        This is *not* fully race-safe. If you expect concurrent user creation, use a DB sequence
-        or a separate counter table and use SELECT ... FOR UPDATE in a transaction.
-        """
-        last = self.model.objects.order_by("-id").only("emp_id").first()
-        if last and last.emp_id and last.emp_id.startswith("EMP"):
-            try:
-                num = int(last.emp_id.replace("EMP", ""))
-                return f"EMP{num + 1:04d}"
-            except Exception:
-                logger.exception("Failed to parse last emp_id '%s'", last.emp_id)
-        return "EMP0001"
-
     def generate_emp_id(self):
-        """
-        Public emp_id generator.
+        with transaction.atomic():
+            result = self.model.objects.select_for_update().aggregate(max_emp_id=Max('emp_id'))
+            last_emp_id = result['max_emp_id']
+            if last_emp_id and last_emp_id.startswith("EMP"):
+                try:
+                    num = int(last_emp_id.replace("EMP", ""))
+                    return f"EMP{num + 1:04d}"
+                except (ValueError, AttributeError):
+                    pass
+            return "EMP0001"
 
-        Keep in mind: high-concurrency environments can generate duplicates using this method.
-        If your deployment creates users concurrently (e.g., via API), replace this with:
-         - a DB sequence, or
-         - a dedicated counter model and use select_for_update inside a transaction.
-
-        Returns:
-            str: new emp_id like 'EMP0001'
-        """
-        return self._generate_emp_id_candidate()
-
-    def _create_user(self, username, password, **extra_fields):
-        """
-        Internal helper that actually constructs and saves the User instance.
-        """
+    def create_user(self, username=None, password=None, **extra_fields):
+        """Create regular user aligned with frontend payload."""
         emp_id = extra_fields.get("emp_id") or self.generate_emp_id()
         username = username or emp_id
 
-        # Generate a secure random password if none provided
         if not password:
             password = get_random_string(
                 length=12,
-                allowed_chars="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+"
+                allowed_chars="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
             )
 
         extra_fields["emp_id"] = emp_id
+        extra_fields.setdefault("is_active", True)
+
         user = self.model(username=username, **extra_fields)
         user.set_password(password)
-
-        # Ensure defaults
-        if "is_active" not in extra_fields:
-            user.is_active = True
-        if "is_staff" not in extra_fields:
-            user.is_staff = extra_fields.get("is_staff", False)
-
         user.save(using=self._db)
 
-        # Log creation for audit (use logger; avoid raw file I/O in model)
-        logger.info("User created: emp_id=%s username=%s email=%s", emp_id, username, extra_fields.get("email"))
+        # Log basic info
+        print(f"\n✅ [USER CREATED]")
+        print(f"   emp_id: {emp_id}")
+        print(f"   username: {username}")
+        print(f"   temporary_password: {password}\n")
 
-        # Important: return the created user instance (password not returned)
         return user
 
-    def create_user(self, username=None, password=None, **extra_fields):
-        """
-        Public API to create a regular user.
-
-        Example:
-            User.objects.create_user(username='jdoe', password='secret', email='jdoe@example.com')
-        """
-        # Ensure required fields are present
-        extra_fields.setdefault("role", "Employee")
-        return self._create_user(username, password, **extra_fields)
-
-    def create_superuser(self, username=None, email=None, password=None, **extra_fields):
-        """
-        Create and save a superuser.
-
-        Django's `createsuperuser` management command will call this method, so ensure it accepts
-        `username`, `email` and `password`.
-        """
+    def create_superuser(self, email, password=None, **extra_fields):
+        """Create admin (superuser)."""
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
         extra_fields.setdefault("role", "Admin")
         extra_fields.setdefault("is_active", True)
+        extra_fields.setdefault("force_password_change", False)
 
         if not email:
-            raise ValueError("Superuser must have an email address.")
+            raise ValueError("Superuser must have an email.")
         if not password:
             raise ValueError("Superuser must have a password.")
 
-        # Use username if provided, else derive from email local-part
-        if not username:
-            username = email.split("@")[0]
-
-        return self._create_user(username, password, **extra_fields)
+        return self.create_user(email=email, password=password, **extra_fields)
 
 
-# -----------------------------------------------------------
+# ===========================================================
 # USER MODEL
-# -----------------------------------------------------------
+# ===========================================================
 class User(AbstractBaseUser, PermissionsMixin):
     """
-    Custom User model.
-
-    Key characteristics:
-    - emp_id: unique, non-editable "EMP0001" style identifier (used as USERNAME_FIELD)
-    - username & email are separate and indexed
-    - role-based utility methods for permission checks
-    - account lockout logic (failed attempts -> temporary lock)
+    Custom User model aligned with frontend fields:
+    username, email, password, role, department, phone, manager
     """
 
-    ROLE_ADMIN = "Admin"
-    ROLE_MANAGER = "Manager"
-    ROLE_EMPLOYEE = "Employee"
-
     ROLE_CHOICES = [
-        (ROLE_ADMIN, "Admin"),
-        (ROLE_MANAGER, "Manager"),
-        (ROLE_EMPLOYEE, "Employee"),
+        ("Admin", "Admin"),
+        ("Manager", "Manager"),
+        ("Employee", "Employee"),
     ]
 
-    STATUS_ACTIVE = "Active"
-    STATUS_INACTIVE = "Inactive"
-    STATUS_CHOICES = [
-        (STATUS_ACTIVE, "Active"),
-        (STATUS_INACTIVE, "Inactive"),
-    ]
+    # ---------- CORE ----------
+    emp_id = models.CharField(
+        max_length=50,
+        unique=True,
+        editable=False,
+        db_index=True,
+        help_text="Auto-generated employee ID (EMP0001, EMP0002, etc.)"
+    )
 
-    # Core
-    emp_id = models.CharField(max_length=20, unique=True, editable=False)
-    username = models.CharField(max_length=150, unique=True)
-    email = models.EmailField(unique=True)
+    username = models.CharField(
+        max_length=150,
+        unique=True,
+        db_index=True,
+        help_text="Username for login"
+    )
+
+    email = models.EmailField(
+        unique=True,
+        db_index=True,
+        help_text="User email address"
+    )
 
     first_name = models.CharField(max_length=100, blank=True)
     last_name = models.CharField(max_length=100, blank=True)
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default=ROLE_EMPLOYEE)
 
-    # Contact
+    role = models.CharField(
+        max_length=20,
+        choices=ROLE_CHOICES,
+        default="Employee",
+        db_index=True,
+        help_text="User role"
+    )
+
+    # ---------- CONTACT ----------
     phone = models.CharField(
         max_length=15,
         null=True,
         blank=True,
-        unique=True,
-        validators=[RegexValidator(r"^\+?\d{7,15}$", "Enter a valid phone number (7-15 digits, optional leading +).")],
+        validators=[RegexValidator(r"^\+?\d{7,15}$", "Enter a valid phone number.")],
+        help_text="Optional phone number"
     )
 
-    # Soft link to department (optional)
+    # ---------- ORGANIZATION ----------
     department = models.ForeignKey(
         "employee.Department",
-        on_delete=models.SET_NULL,
+        on_delete=models.PROTECT,
         null=True,
         blank=True,
         related_name="users",
+        help_text="Department of the user"
+    )
+
+    manager = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='direct_reports',
+        limit_choices_to={'role__in': ['Manager', 'Admin']},
+        help_text="Reporting manager"
     )
 
     joining_date = models.DateField(default=timezone.now)
-    is_verified = models.BooleanField(default=False)
-    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=STATUS_ACTIVE)
 
-    # Security / lockout
+    # ---------- EMAIL VERIFICATION ----------
+    is_verified = models.BooleanField(default=False)
+    verification_token = models.CharField(max_length=100, null=True, blank=True)
+    verification_token_created = models.DateTimeField(null=True, blank=True)
+
+    # ---------- SECURITY ----------
     failed_login_attempts = models.PositiveIntegerField(default=0)
     account_locked = models.BooleanField(default=False)
     locked_at = models.DateTimeField(null=True, blank=True)
-    force_password_change = models.BooleanField(default=False)
+    force_password_change = models.BooleanField(default=True)
 
-    # Django auth flags
+    # ---------- DJANGO FLAGS ----------
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
-
-    # Audit
     date_joined = models.DateTimeField(auto_now_add=True)
+
+    # ---------- AUDIT ----------
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     objects = UserManager()
 
-    # Use emp_id as the username field so external systems refer to stable identifier
     USERNAME_FIELD = "emp_id"
-    # Required fields when using createsuperuser (Django will prompt for these)
     REQUIRED_FIELDS = ["email", "username"]
 
     class Meta:
@@ -217,117 +222,87 @@ class User(AbstractBaseUser, PermissionsMixin):
         verbose_name_plural = "Users"
         ordering = ["emp_id"]
         indexes = [
-            models.Index(fields=["username"]),
-            models.Index(fields=["email"]),
-            models.Index(fields=["emp_id"]),
+            models.Index(fields=["username", "email", "emp_id"]),
+            models.Index(fields=["role", "is_active"]),
         ]
 
     def __str__(self):
         return f"{self.username} ({self.emp_id})"
 
-    # ---------------------------------------------------
-    # Clean / validation
-    # ---------------------------------------------------
+    # ---------- BASIC METHODS ----------
+    def get_full_name(self):
+        return f"{self.first_name} {self.last_name}".strip() or self.username
+
+    def get_short_name(self):
+        return self.first_name or self.username
+
+    # ---------- VALIDATION ----------
     def clean(self):
-        """
-        Additional model-level validation: basic sanity checks.
-        Raises ValidationError if data invalid.
-        """
-        errors = {}
+        super().clean()
+        if self.role == "Employee" and not self.department:
+            raise ValidationError({'department': 'Employees must belong to a department.'})
+        if self.manager and self.manager.id == self.id:
+            raise ValidationError({'manager': 'User cannot be their own manager.'})
 
-        # Email must be present
-        if not self.email:
-            errors["email"] = "Email is required."
+    # ---------- SAVE ----------
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
 
-        # status must be a valid choice
-        if self.status not in dict(self.STATUS_CHOICES):
-            errors["status"] = "Invalid status."
+    # ---------- STATUS ----------
+    @property
+    def status(self):
+        if self.account_locked:
+            return "Locked"
+        return "Active" if self.is_active else "Inactive"
 
-        # role must be valid
-        if self.role not in dict(self.ROLE_CHOICES):
-            errors["role"] = "Invalid role."
-
-        if errors:
-            raise ValidationError(errors)
-
-    # ---------------------------------------------------
-    # Role helper convenience methods
-    # ---------------------------------------------------
-    def is_admin(self):
-        return self.role == self.ROLE_ADMIN or self.is_superuser
-
-    def is_manager(self):
-        return self.role == self.ROLE_MANAGER
-
-    def is_employee(self):
-        return self.role == self.ROLE_EMPLOYEE
-
-    # ---------------------------------------------------
-    # Account lockout logic
-    # ---------------------------------------------------
-    LOCK_THRESHOLD = 5
-    LOCK_DURATION_HOURS = 2
-
+    # ---------- LOCKOUT ----------
     def lock_account(self):
-        """Lock account for LOCK_DURATION_HOURS and deactivate login."""
         self.account_locked = True
         self.is_active = False
         self.locked_at = timezone.now()
-        # Save minimal fields
         self.save(update_fields=["account_locked", "is_active", "locked_at"])
-        logger.warning("Account locked for user %s at %s", self.emp_id, self.locked_at)
 
     def unlock_account(self):
-        """Unlock account and reset failed attempts."""
         self.account_locked = False
         self.is_active = True
         self.failed_login_attempts = 0
         self.locked_at = None
         self.save(update_fields=["account_locked", "is_active", "failed_login_attempts", "locked_at"])
-        logger.info("Account unlocked for user %s", self.emp_id)
 
     def increment_failed_attempts(self):
-        """
-        Increase failed attempts and auto-lock if threshold reached.
-        If the account was already locked but lock duration is expired, auto-unlock and continue.
-        """
-        # Auto-unlock if lock expired
         if self.account_locked and self.locked_at:
-            if timezone.now() >= self.locked_at + timezone.timedelta(hours=self.LOCK_DURATION_HOURS):
+            if timezone.now() >= self.locked_at + timedelta(hours=2):
                 self.unlock_account()
-
-        self.failed_login_attempts = (self.failed_login_attempts or 0) + 1
-        if self.failed_login_attempts >= self.LOCK_THRESHOLD:
+                return
+        if self.account_locked:
+            return
+        self.failed_login_attempts += 1
+        if self.failed_login_attempts >= 5:
             self.lock_account()
         else:
             self.save(update_fields=["failed_login_attempts"])
-        logger.debug("Failed attempts for %s = %s", self.emp_id, self.failed_login_attempts)
 
     def reset_login_attempts(self):
-        """Reset failed login attempts after successful authentication."""
-        if self.failed_login_attempts:
-            self.failed_login_attempts = 0
-            self.save(update_fields=["failed_login_attempts"])
-            logger.debug("Reset failed login attempts for %s", self.emp_id)
+        self.failed_login_attempts = 0
+        self.account_locked = False
+        self.locked_at = None
+        self.save(update_fields=["failed_login_attempts", "account_locked", "locked_at"])
 
-    def lock_remaining_time(self):
-        """
-        Return remaining lock time as dict {'hours': x, 'minutes': y} or None.
-        If lock expired this method will unlock the account and return None.
-        """
-        if not self.account_locked or not self.locked_at:
-            return None
-        remaining_seconds = (self.locked_at + timezone.timedelta(hours=self.LOCK_DURATION_HOURS) - timezone.now()).total_seconds()
-        if remaining_seconds <= 0:
-            self.unlock_account()
-            return None
-        hours = int(remaining_seconds // 3600)
-        minutes = int((remaining_seconds % 3600) // 60)
-        return {"hours": hours, "minutes": minutes}
+    # ---------- PASSWORD MANAGEMENT ----------
+    def set_password(self, raw_password):
+        from django.contrib.auth.hashers import check_password, make_password
+        recent_passwords = self.password_history.all()[:5]
+        for old_pw in recent_passwords:
+            if check_password(raw_password, old_pw.password_hash):
+                raise ValidationError("Cannot reuse last 5 passwords.")
+        super().set_password(raw_password)
+        if self.pk:
+            PasswordHistory.add_password(self, make_password(raw_password))
 
-    def require_password_change(self):
-        """Return True if the user must change password on next login."""
-        return bool(self.force_password_change)
+    def mark_password_changed(self):
+        self.force_password_change = False
+        self.save(update_fields=['force_password_change'])
 
 '''
 # ===========================================================

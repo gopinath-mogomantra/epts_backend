@@ -1,10 +1,10 @@
 # ===========================================================
-# users/views.py (Production-Ready & Fully Validated)
+# users/views.py (Frontend-Aligned & Production-Ready)
 # ===========================================================
 
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
-from rest_framework import generics, status, filters, permissions
+from rest_framework import generics, status, filters
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.decorators import api_view, permission_classes
@@ -12,6 +12,8 @@ from django.contrib.auth import get_user_model, authenticate
 from django.utils import timezone
 from django.db import transaction
 from django.utils.crypto import get_random_string
+from django.core.mail import send_mail
+from django.conf import settings
 import logging
 
 from employee.models import Employee, Department
@@ -27,10 +29,9 @@ User = get_user_model()
 
 
 # ===========================================================
-# ✅ 1. LOGIN — JWT Authentication with Lockout Handling
+# ✅ 1. LOGIN
 # ===========================================================
 class ObtainTokenPairView(TokenObtainPairView):
-    """Authenticate user via emp_id or username (JWT token issuance)."""
     permission_classes = [AllowAny]
     serializer_class = CustomTokenObtainPairSerializer
 
@@ -39,21 +40,13 @@ class ObtainTokenPairView(TokenObtainPairView):
 # ✅ 2. REFRESH TOKEN
 # ===========================================================
 class RefreshTokenView(TokenRefreshView):
-    """Refresh access token using refresh token."""
     permission_classes = [AllowAny]
 
 
 # ===========================================================
-# ✅ 3. REGISTER USER — Admin or Manager Only
+# ✅ 3. REGISTER USER (Admin / Manager)
 # ===========================================================
 class RegisterView(generics.CreateAPIView):
-    """
-    Allows Admins or Managers to register new users.
-    Automatically:
-    - Generates emp_id
-    - Assigns temporary password
-    - Creates corresponding Employee record
-    """
     queryset = User.objects.all()
     serializer_class = RegisterSerializer
     permission_classes = [IsAuthenticated]
@@ -62,38 +55,43 @@ class RegisterView(generics.CreateAPIView):
     def create(self, request, *args, **kwargs):
         current_user = request.user
 
-        # Role check
+        # Permission check
         if not (current_user.is_admin() or current_user.is_manager()):
             return Response(
-                {"error": "Access denied. Only Admin or Manager can create new users."},
+                {"error": "Access denied. Only Admin or Manager can create users."},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
         serializer = self.get_serializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
 
-        # Check for existing email / emp_id duplicates before creation
         email = serializer.validated_data.get("email")
+        if not email:
+            return Response({"error": "Email is required."}, status=400)
         if User.objects.filter(email__iexact=email).exists():
-            return Response(
-                {"error": "A user with this email already exists."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"error": "User with this email already exists."}, status=400)
 
-        # Create user safely (emp_id + temp password handled in serializer)
+        # Create user (handled by serializer)
         user = serializer.save()
 
-        # Ensure joining_date exists
+        # Ensure joining_date
         if not user.joining_date:
             user.joining_date = timezone.now().date()
             user.save(update_fields=["joining_date"])
 
-        # ✅ Auto-create linked Employee record if not exists
+        # ✅ Auto-create Employee record (flexible department)
         try:
-            if not Employee.objects.filter(user=user).exists():
-                dept_id = request.data.get("department")
-                department = Department.objects.filter(id=dept_id).first() if dept_id else None
+            dept_value = request.data.get("department")
+            department = None
+            if dept_value:
+                if str(dept_value).isdigit():
+                    department = Department.objects.filter(id=int(dept_value)).first()
+                if not department:
+                    department = Department.objects.filter(code__iexact=dept_value).first()
+                if not department:
+                    department = Department.objects.filter(name__iexact=dept_value).first()
 
+            if not Employee.objects.filter(user=user).exists():
                 Employee.objects.create(
                     user=user,
                     emp_id=user.emp_id,
@@ -102,93 +100,115 @@ class RegisterView(generics.CreateAPIView):
                     joining_date=user.joining_date,
                 )
         except Exception as e:
-            logger.warning(f"Employee record auto-create failed for {user.emp_id}: {e}")
+            logger.warning(f"Employee record creation failed for {user.emp_id}: {e}")
 
+        # ✅ Send email (optional)
+        try:
+            send_mail(
+                subject="EPTS - Account Created",
+                message=(
+                    f"Hello {user.get_full_name()},\n\n"
+                    f"Your account has been created successfully.\n"
+                    f"Employee ID: {user.emp_id}\n"
+                    f"Temporary Password: {getattr(user, 'temp_password', 'N/A')}\n\n"
+                    f"Please log in and change your password immediately.\n\n"
+                    f"Regards,\nEPTS Admin Team"
+                ),
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[user.email],
+                fail_silently=True,
+            )
+        except Exception as e:
+            logger.warning(f"Email send failed for {user.emp_id}: {e}")
+
+        logger.info(f"User {user.emp_id} registered by {current_user.emp_id}")
         return Response(
             {
                 "message": "✅ User registered successfully.",
                 "user": ProfileSerializer(user).data,
-                "temp_password": getattr(user, "temp_password", None),
+                "temp_password": getattr(user, "temp_password", None) if settings.DEBUG else None,
             },
             status=status.HTTP_201_CREATED,
         )
 
 
 # ===========================================================
-# ✅ 4. CHANGE PASSWORD — First Login / Regular Change
+# ✅ 4. CHANGE PASSWORD
 # ===========================================================
 class ChangePasswordView(APIView):
-    """
-    Change user password.
-    Supports:
-    - First login forced change
-    - Normal authenticated user password update
-    """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         serializer = ChangePasswordSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         result = serializer.save()
-        return Response(result, status=status.HTTP_200_OK)
+        logger.info(f"Password changed for {request.user.emp_id}")
+        return Response(result, status=200)
 
 
 # ===========================================================
-# ✅ 5. PROFILE API — View or Edit Self Profile
+# ✅ 5. PROFILE (GET / PATCH)
 # ===========================================================
 class ProfileView(APIView):
-    """
-    GET: Retrieve logged-in user's profile.
-    PATCH: Update basic profile details (name, phone, email).
-    """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         serializer = ProfileSerializer(request.user)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.data, status=200)
 
     def patch(self, request):
         user = request.user
-        editable_fields = ["first_name", "last_name", "email", "phone"]
+        editable_fields = {"first_name", "last_name", "email", "phone"}
+        updates = {}
 
         for field, value in request.data.items():
             if field in editable_fields:
-                setattr(user, field, value)
-        user.save(update_fields=[f for f in request.data.keys() if f in editable_fields])
+                if field == "email" and User.objects.exclude(id=user.id).filter(email__iexact=value).exists():
+                    return Response({"error": "Email already exists."}, status=400)
+                if field == "phone" and value and User.objects.exclude(id=user.id).filter(phone=value).exists():
+                    return Response({"error": "Phone already exists."}, status=400)
+                updates[field] = value
 
-        logger.info("Profile updated for user %s", user.emp_id)
+        for k, v in updates.items():
+            setattr(user, k, v)
+        if updates:
+            user.save(update_fields=list(updates.keys()))
+            logger.info(f"Profile updated by {user.emp_id}")
+
         return Response(
-            {
-                "message": "✅ Profile updated successfully.",
-                "user": ProfileSerializer(user).data,
-            },
-            status=status.HTTP_200_OK,
+            {"message": "✅ Profile updated successfully.", "user": ProfileSerializer(user).data},
+            status=200,
         )
 
 
 # ===========================================================
-# ✅ 6. ROLE LIST — For Dropdown in Frontend
+# ✅ 6. ROLE LIST
 # ===========================================================
 class RoleListView(APIView):
-    """Return available roles for dropdowns (Admin, Manager, Employee)."""
     permission_classes = [AllowAny]
 
     def get(self, request):
         roles = [role for role, _ in User.ROLE_CHOICES]
-        return Response({"roles": roles}, status=status.HTTP_200_OK)
+        return Response({"roles": roles}, status=200)
 
 
 # ===========================================================
-# ✅ 7. USER LIST — Admin Only (Search & Filters)
+# ✅ 7. USER LIST (Admin)
 # ===========================================================
+from rest_framework.pagination import PageNumberPagination
+
+class UserPagination(PageNumberPagination):
+    page_size = 20
+
+
 class UserListView(generics.ListAPIView):
-    """List all users — visible to Admins only."""
-    queryset = User.objects.select_related("department").all().order_by("emp_id")
+    queryset = User.objects.select_related("department", "manager").all().order_by("emp_id")
     serializer_class = ProfileSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ["username", "emp_id", "email", "first_name", "last_name", "status"]
     ordering_fields = ["emp_id", "username", "joining_date"]
+    pagination_class = UserPagination
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -206,10 +226,7 @@ class UserListView(generics.ListAPIView):
 
     def list(self, request, *args, **kwargs):
         if not request.user.is_admin():
-            return Response(
-                {"error": "Access denied. Admins only."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+            return Response({"error": "Access denied. Admins only."}, status=403)
         return super().list(request, *args, **kwargs)
 
 
@@ -218,19 +235,16 @@ class UserListView(generics.ListAPIView):
 # ===========================================================
 @api_view(["POST"])
 @permission_classes([IsAdminUser])
+@transaction.atomic
 def reset_password(request):
-    """
-    Reset a user’s password (Admin only).
-    Generates a new random password and enforces password change at next login.
-    """
     emp_id = request.data.get("emp_id")
     if not emp_id:
-        return Response({"error": "emp_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"error": "emp_id is required."}, status=400)
 
     try:
         user = User.objects.get(emp_id=emp_id)
     except User.DoesNotExist:
-        return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"error": "User not found."}, status=404)
 
     new_password = get_random_string(
         length=10,
@@ -241,94 +255,104 @@ def reset_password(request):
     user.force_password_change = True
     user.save(update_fields=["password", "force_password_change"])
 
-    logger.info("Password reset by Admin for user %s", user.emp_id)
-    return Response(
-        {
-            "message": f"✅ Password reset successfully for {user.emp_id}.",
-            "username": user.username,
-            "temp_password": new_password,
-            "force_password_change": True,
-        },
-        status=status.HTTP_200_OK,
-    )
+    try:
+        send_mail(
+            subject="EPTS Password Reset Notification",
+            message=(
+                f"Hello {user.get_full_name()},\n\n"
+                f"Your password has been reset by Admin ({request.user.emp_id}).\n"
+                f"Temporary Password: {new_password}\n\n"
+                f"Please log in and change your password immediately.\n\n"
+                f"Regards,\nEPTS Admin Team"
+            ),
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[user.email],
+            fail_silently=True,
+        )
+    except Exception as e:
+        logger.warning(f"Email send failed for {user.emp_id}: {e}")
+
+    logger.info(f"Password reset by Admin {request.user.emp_id} for user {user.emp_id}")
+    response_data = {
+        "message": f"✅ Password reset successfully for {user.emp_id}.",
+        "username": user.username,
+        "force_password_change": True,
+    }
+    if settings.DEBUG:
+        response_data["temp_password"] = new_password
+    return Response(response_data, status=200)
 
 
 # ===========================================================
-# ✅ 9. USER DETAIL (GET / PATCH / DELETE — Admin Only)
+# ✅ 9. USER DETAIL (Admin CRUD)
 # ===========================================================
 class UserDetailView(APIView):
-    """
-    Admins can:
-    - GET: Fetch user by emp_id
-    - PATCH: Update user details
-    - DELETE: Soft delete (mark Inactive)
-    """
     permission_classes = [IsAuthenticated]
 
     def get_object(self, emp_id):
-        try:
-            return User.objects.get(emp_id=emp_id)
-        except User.DoesNotExist:
-            return None
+        return User.objects.filter(emp_id=emp_id).first()
 
     def get(self, request, emp_id):
         user = self.get_object(emp_id)
         if not user:
-            return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
-        return Response(ProfileSerializer(user).data, status=status.HTTP_200_OK)
+            return Response({"error": "User not found."}, status=404)
+        return Response(ProfileSerializer(user).data, status=200)
 
+    @transaction.atomic
     def patch(self, request, emp_id):
-        current_user = request.user
-        if not current_user.is_admin():
-            return Response(
-                {"error": "Access denied. Only Admins can update users."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        admin = request.user
+        if not admin.is_admin():
+            return Response({"error": "Access denied. Admins only."}, status=403)
 
         user = self.get_object(emp_id)
         if not user:
-            return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"error": "User not found."}, status=404)
 
-        editable_fields = ["first_name", "last_name", "email", "phone", "is_verified", "status", "department"]
-        for field, value in request.data.items():
-            if field in editable_fields:
-                setattr(user, field, value)
-        user.save(update_fields=[f for f in request.data.keys() if f in editable_fields])
+        editable_fields = ["first_name", "last_name", "email", "phone", "is_verified", "status", "department", "manager"]
+        updates = {f: v for f, v in request.data.items() if f in editable_fields}
 
-        logger.info("User %s updated by Admin %s", emp_id, current_user.emp_id)
+        # Resolve manager if provided
+        if "manager" in updates:
+            mgr_val = updates.pop("manager")
+            manager_obj = (
+                User.objects.filter(emp_id__iexact=mgr_val).first()
+                or User.objects.filter(username__iexact=mgr_val).first()
+            )
+            if not manager_obj:
+                return Response({"error": f"Manager '{mgr_val}' not found."}, status=400)
+            updates["manager"] = manager_obj
+
+        for k, v in updates.items():
+            setattr(user, k, v)
+        if updates:
+            user.save(update_fields=list(updates.keys()))
+            logger.info(f"User {emp_id} updated by Admin {admin.emp_id}")
+
         return Response(
             {"message": "✅ User updated successfully.", "user": ProfileSerializer(user).data},
-            status=status.HTTP_200_OK,
+            status=200,
         )
 
+    @transaction.atomic
     def delete(self, request, emp_id):
-        current_user = request.user
-        if not current_user.is_admin():
-            return Response(
-                {"error": "Access denied. Only Admins can deactivate users."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        admin = request.user
+        if not admin.is_admin():
+            return Response({"error": "Access denied. Admins only."}, status=403)
 
-        user_to_deactivate = self.get_object(emp_id)
-        if not user_to_deactivate:
-            return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+        user = self.get_object(emp_id)
+        if not user:
+            return Response({"error": "User not found."}, status=404)
+        if user == admin:
+            return Response({"error": "You cannot deactivate your own account."}, status=400)
+        if user.is_admin():
+            return Response({"error": "Cannot deactivate another admin account."}, status=400)
 
-        if user_to_deactivate == current_user:
-            return Response(
-                {"error": "You cannot deactivate your own account."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        user.is_active = False
+        user.status = "Inactive"
+        user.save(update_fields=["is_active", "status"])
+        logger.warning(f"User {emp_id} deactivated by Admin {admin.emp_id}")
 
-        user_to_deactivate.is_active = False
-        user_to_deactivate.status = "Inactive"
-        user_to_deactivate.save(update_fields=["is_active", "status"])
-
-        logger.warning("User %s deactivated by Admin %s", emp_id, current_user.emp_id)
         return Response(
-            {
-                "message": f"✅ User '{emp_id}' deactivated successfully.",
-                "status": user_to_deactivate.status,
-                "is_active": user_to_deactivate.is_active,
-            },
-            status=status.HTTP_200_OK,
+            {"message": f"✅ User '{emp_id}' deactivated successfully.", "status": user.status},
+            status=200,
         )

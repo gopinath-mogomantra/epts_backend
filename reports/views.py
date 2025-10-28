@@ -8,6 +8,7 @@
 # - Department-Wise Report
 # - Employee Performance History
 # - CSV Export
+# - Print Report (PDF Export)
 # ===============================================
 
 from rest_framework.views import APIView
@@ -21,6 +22,9 @@ from datetime import timedelta, datetime
 from itertools import chain
 import csv
 import logging
+from io import BytesIO
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 
 from employee.models import Employee
 from performance.models import PerformanceEvaluation
@@ -290,12 +294,7 @@ class DepartmentReportView(APIView):
             if emp.manager and hasattr(emp.manager, "user"):
                 manager_full = f"{emp.manager.user.first_name} {emp.manager.user.last_name}".strip()
             else:
-                dept_manager = Employee.objects.filter(department=emp.department, role__name__iexact="Manager").first()
-                manager_full = (
-                    f"{dept_manager.user.first_name} {dept_manager.user.last_name}".strip()
-                    if dept_manager and hasattr(dept_manager, "user")
-                    else "Not Assigned"
-                )
+                manager_full = "Not Assigned"
 
             data.append({
                 "department_name": dept_name,
@@ -386,3 +385,113 @@ class ExportWeeklyCSVView(APIView):
             ])
 
         return response
+
+
+# ===========================================================
+# ✅ 7. PRINT PERFORMANCE REPORT (PDF Export)
+# ===========================================================
+class PrintPerformanceReportView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, emp_id):
+        """Generate printable PDF performance report for employee."""
+        week = request.query_params.get("week")
+
+        try:
+            employee = Employee.objects.select_related("user", "department").get(user__emp_id__iexact=emp_id)
+        except Employee.DoesNotExist:
+            return Response({"error": f"Employee '{emp_id}' not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Role-based access
+        user = request.user
+        role = getattr(user, "role", "")
+        if role == "Employee" and user.emp_id != emp_id:
+            return Response({"error": "Employees can only print their own reports."}, status=status.HTTP_403_FORBIDDEN)
+        if role == "Manager" and not Employee.objects.filter(manager__user=user, user__emp_id=emp_id).exists():
+            return Response({"error": "Managers can print only their team reports."}, status=status.HTTP_403_FORBIDDEN)
+
+        evaluations = PerformanceEvaluation.objects.filter(employee__user__emp_id__iexact=emp_id)
+        if week:
+            evaluations = evaluations.filter(week_number=week.split("-W")[-1])
+
+        if not evaluations.exists():
+            return Response({"message": "No performance data found for this employee."}, status=status.HTTP_200_OK)
+
+        buffer = BytesIO()
+        pdf = canvas.Canvas(buffer, pagesize=A4)
+        pdf.setTitle(f"Performance Report - {emp_id}")
+
+        pdf.setFont("Helvetica-Bold", 16)
+        pdf.drawString(180, 800, "Employee Performance Report")
+        pdf.setFont("Helvetica", 12)
+        pdf.drawString(50, 770, f"Employee ID: {employee.user.emp_id}")
+        pdf.drawString(50, 755, f"Name: {employee.user.first_name} {employee.user.last_name}")
+        pdf.drawString(50, 740, f"Department: {employee.department.name if employee.department else 'N/A'}")
+        if week:
+            pdf.drawString(50, 725, f"Week: {week}")
+        pdf.drawString(50, 710, f"Generated on: {timezone.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+        y = 680
+        pdf.setFont("Helvetica-Bold", 12)
+        pdf.drawString(50, y, "Evaluation Type")
+        pdf.drawString(200, y, "Average Score")
+        pdf.drawString(350, y, "Remarks")
+        pdf.line(45, y - 5, 550, y - 5)
+
+        pdf.setFont("Helvetica", 11)
+        y -= 20
+        for eval_obj in evaluations:
+            avg_score = round(sum(eval_obj.metrics_breakdown.values()) / len(eval_obj.metrics_breakdown), 2)
+            pdf.drawString(50, y, eval_obj.evaluation_type)
+            pdf.drawString(200, y, str(avg_score))
+            pdf.drawString(350, y, (eval_obj.remarks or "")[:60])
+            y -= 20
+            if y < 80:
+                pdf.showPage()
+                y = 800
+
+        pdf.showPage()
+        pdf.save()
+
+        buffer.seek(0)
+        filename = f"Performance_Report_{emp_id}_{timezone.now().strftime('%Y%m%d')}.pdf"
+        response = HttpResponse(buffer, content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename=\"{filename}\"'
+        return response
+
+
+
+# ===========================================================
+# ✅ 7. PRINT PERFORMANCE REPORT (PDF Export)
+# ===========================================================
+from reports.utils.pdf_generator import generate_employee_performance_pdf
+
+class PrintPerformanceReportView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, emp_id):
+        """Generate printable PDF performance report for employee."""
+        week = request.query_params.get("week")
+
+        try:
+            employee = Employee.objects.select_related("user", "department").get(user__emp_id__iexact=emp_id)
+        except Employee.DoesNotExist:
+            return Response({"error": f"Employee '{emp_id}' not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Role-based access
+        user = request.user
+        role = getattr(user, "role", "")
+        if role == "Employee" and user.emp_id != emp_id:
+            return Response({"error": "Employees can only print their own reports."}, status=status.HTTP_403_FORBIDDEN)
+        if role == "Manager" and not Employee.objects.filter(manager__user=user, user__emp_id=emp_id).exists():
+            return Response({"error": "Managers can print only their team reports."}, status=status.HTTP_403_FORBIDDEN)
+
+        evaluations = PerformanceEvaluation.objects.filter(employee__user__emp_id__iexact=emp_id)
+        if week:
+            evaluations = evaluations.filter(week_number=week.split("-W")[-1])
+
+        if not evaluations.exists():
+            return Response({"message": "No performance data found for this employee."}, status=status.HTTP_200_OK)
+
+        # ✅ Generate and return the PDF using the utility
+        return generate_employee_performance_pdf(employee, evaluations, week)
