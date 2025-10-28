@@ -1,1 +1,9 @@
 [2025-10-28 14:19:51.477037] Created user john.doe (EMP0037)
+
+
+{
+    "message": "✅ Password reset successfully for EMP0002.",
+    "username": "anil.qa",
+    "force_password_change": true,
+    "temp_password": "P6UvQE^bDI"
+}
