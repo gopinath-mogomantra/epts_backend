@@ -1,11 +1,12 @@
 # ===========================================================
-# employee/views.py (Final — Frontend & Business Logic Aligned)
+# employee/views.py ✅ Final Enhanced & Protected (Soft Delete + CSV Upload)
+# Employee Performance Tracking System (EPTS)
 # ===========================================================
 
 from rest_framework import viewsets, status, permissions, filters
 from rest_framework.response import Response
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from django.contrib.auth import get_user_model
@@ -52,19 +53,21 @@ class DepartmentViewSet(viewsets.ModelViewSet):
         qs = super().get_queryset()
         include_inactive = self.request.query_params.get("include_inactive", "").lower()
         user = self.request.user
-
         if include_inactive == "true" and (user.is_superuser or getattr(user, "role", "") == "Admin"):
             return qs
         return qs.filter(is_active=True)
 
+    def _is_admin(self, request):
+        return request.user.is_superuser or getattr(request.user, "role", "") == "Admin"
+
     def create(self, request, *args, **kwargs):
-        if not (request.user.is_superuser or getattr(request.user, "role", "") == "Admin"):
+        if not self._is_admin(request):
             return Response({"error": "Only Admins can create departments."}, status=status.HTTP_403_FORBIDDEN)
         logger.info(f"✅ Department created by {request.user.username}")
         return super().create(request, *args, **kwargs)
 
     def update(self, request, *args, **kwargs):
-        if not (request.user.is_superuser or getattr(request.user, "role", "") == "Admin"):
+        if not self._is_admin(request):
             return Response({"error": "Only Admins can update departments."}, status=status.HTTP_403_FORBIDDEN)
         logger.info(f"✏️ Department updated by {request.user.username}")
         return super().update(request, *args, **kwargs)
@@ -72,37 +75,44 @@ class DepartmentViewSet(viewsets.ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         """Soft delete (deactivate) department unless forced."""
         instance = self.get_object()
-        if not (request.user.is_superuser or getattr(request.user, "role", "") == "Admin"):
+        if not self._is_admin(request):
             return Response({"error": "Only Admins can delete departments."}, status=status.HTTP_403_FORBIDDEN)
 
         force_delete = request.query_params.get("force", "").lower() == "true"
         if force_delete:
             instance.delete()
             logger.warning(f"🗑️ Department '{instance.name}' permanently deleted by {request.user.username}")
-            return Response({"message": f"Department '{instance.name}' permanently deleted."}, status=status.HTTP_204_NO_CONTENT)
+            return Response({"message": f"Department '{instance.name}' permanently deleted."},
+                            status=status.HTTP_204_NO_CONTENT)
 
-        if instance.employees.filter(status="Active").exists():
-            return Response({"error": "Cannot deactivate department with active employees."}, status=status.HTTP_400_BAD_REQUEST)
+        if instance.employees.filter(status="Active", is_deleted=False).exists():
+            return Response({"error": "Cannot deactivate department with active employees."},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         instance.is_active = False
         instance.save(update_fields=["is_active"])
         logger.info(f"🚫 Department '{instance.name}' deactivated by {request.user.username}")
-        return Response({"message": f"✅ Department '{instance.name}' deactivated successfully."}, status=status.HTTP_200_OK)
+        return Response({"message": f"✅ Department '{instance.name}' deactivated successfully."},
+                        status=status.HTTP_200_OK)
 
 
 # ===========================================================
-# ✅ EMPLOYEE VIEWSET
+# ✅ EMPLOYEE VIEWSET (Soft Delete Protected)
 # ===========================================================
 class EmployeeViewSet(viewsets.ModelViewSet):
     """Unified CRUD viewset for employees."""
 
-    queryset = Employee.objects.select_related("user", "department", "manager").prefetch_related("team_members")
+    queryset = Employee.objects.select_related("user", "department", "manager") \
+        .prefetch_related("team_members").filter(is_deleted=False)
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = DefaultPagination
     lookup_field = "emp_id"
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ["department", "manager", "status"]
-    search_fields = ["user__first_name", "user__last_name", "user__emp_id", "designation", "contact_number", "department__name"]
+    search_fields = [
+        "user__first_name", "user__last_name", "user__emp_id",
+        "designation", "contact_number", "department__name"
+    ]
     ordering_fields = ["joining_date", "user__first_name", "user__emp_id"]
 
     def get_serializer_class(self):
@@ -112,93 +122,97 @@ class EmployeeViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        qs = super().get_queryset()
-        if getattr(user, "role", "") == "Manager":
+        qs = super().get_queryset().filter(is_deleted=False)
+        role = getattr(user, "role", "")
+        if role == "Manager":
             return qs.filter(manager__user=user)
-        elif getattr(user, "role", "") == "Employee":
+        elif role == "Employee":
             return qs.filter(user=user)
         return qs
+
+    def _has_admin_rights(self, user):
+        return user.is_superuser or getattr(user, "role", "") in ["Admin", "Manager"]
 
     def get_object(self):
         emp_id = self.kwargs.get("emp_id")
         try:
-            return Employee.objects.select_related("user", "department", "manager").get(user__emp_id__iexact=emp_id)
+            employee = Employee.objects.select_related("user", "department", "manager").get(user__emp_id__iexact=emp_id)
+            if employee.is_deleted:
+                raise ValidationError("❌ This employee has been deleted. No further actions allowed.")
+            return employee
         except Employee.DoesNotExist:
             raise NotFound(detail=f"Employee with emp_id '{emp_id}' not found.")
+        except ValidationError as e:
+            raise NotFound(detail=str(e))
 
     @transaction.atomic
     def create(self, request, *args, **kwargs):
-        if not (request.user.is_superuser or getattr(request.user, "role", "") in ["Admin", "Manager"]):
-            return Response({"error": "You do not have permission to create employees."}, status=status.HTTP_403_FORBIDDEN)
-
+        if not self._has_admin_rights(request.user):
+            return Response({"error": "You do not have permission to create employees."},
+                            status=status.HTTP_403_FORBIDDEN)
         serializer = self.get_serializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
         employee = serializer.save()
-        logger.info(f"👤 Employee '{employee.emp_id}' created by {request.user.username}")
-
-        return Response(
-            {
-                "message": "✅ Employee created successfully.",
-                "employee": EmployeeSerializer(employee, context={"request": request}).data,
-            },
-            status=status.HTTP_201_CREATED,
-        )
+        employee.refresh_from_db()
+        logger.info(f"👤 Employee '{employee.user.emp_id}' created by {request.user.username}")
+        return Response({"message": "✅ Employee created successfully.",
+                         "employee": EmployeeSerializer(employee, context={"request": request}).data},
+                        status=status.HTTP_201_CREATED)
 
     @transaction.atomic
     def update(self, request, *args, **kwargs):
         employee = self.get_object()
+        if employee.is_deleted:
+            return Response({"error": "❌ This employee has been deleted. No updates allowed."},
+                            status=status.HTTP_400_BAD_REQUEST)
         user = request.user
-
         if getattr(user, "role", "") == "Manager" and employee.manager and employee.manager.user != user:
-            return Response({"error": "Managers can update only their own team members."}, status=status.HTTP_403_FORBIDDEN)
-
+            return Response({"error": "Managers can update only their own team members."},
+                            status=status.HTTP_403_FORBIDDEN)
         serializer = self.get_serializer(employee, data=request.data, partial=True, context={"request": request})
         serializer.is_valid(raise_exception=True)
         serializer.save()
-        logger.info(f"✏️ Employee '{employee.emp_id}' updated by {user.username}")
-
-        return Response(
-            {
-                "message": "✅ Employee updated successfully.",
-                "employee": EmployeeSerializer(employee, context={"request": request}).data,
-            },
-            status=status.HTTP_200_OK,
-        )
+        employee.refresh_from_db()
+        logger.info(f"✏️ Employee '{employee.user.emp_id}' updated by {user.username}")
+        return Response({"message": "✅ Employee updated successfully.",
+                         "employee": EmployeeSerializer(employee, context={"request": request}).data},
+                        status=status.HTTP_200_OK)
 
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
-        """Soft delete an employee."""
+        """Soft delete an employee (cannot reactivate)."""
         employee = self.get_object()
         user = request.user
 
+        if employee.is_deleted:
+            return Response({"error": "❌ This employee is already deleted."},
+                            status=status.HTTP_400_BAD_REQUEST)
         if getattr(employee.user, "role", "") in ["Admin", "Manager"]:
-            return Response({"error": "❌ Cannot delete Admin or Manager accounts."}, status=status.HTTP_403_FORBIDDEN)
-        if not (user.is_superuser or getattr(user, "role", "") in ["Admin", "Manager"]):
-            return Response({"error": "You do not have permission to delete employees."}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"error": "❌ Cannot delete Admin or Manager accounts."},
+                            status=status.HTTP_403_FORBIDDEN)
+        if not self._has_admin_rights(user):
+            return Response({"error": "You do not have permission to delete employees."},
+                            status=status.HTTP_403_FORBIDDEN)
 
-        employee.status = "Inactive"
-        employee.save(update_fields=["status"])
-        employee.user.is_active = False
-        employee.user.save(update_fields=["is_active"])
-
-        logger.warning(f"⚠️ Employee '{employee.emp_id}' deactivated by {user.username}")
-        return Response({"message": f"🟡 Employee '{employee.user.emp_id}' deactivated successfully."}, status=status.HTTP_200_OK)
+        employee.soft_delete()
+        logger.warning(f"⚠️ Employee '{employee.user.emp_id}' soft-deleted by {user.username}")
+        return Response({"message": f"🗑️ Employee '{employee.user.emp_id}' deleted successfully."},
+                        status=status.HTTP_200_OK)
 
     # --------------------------------------------------------
-    # TEAM MEMBERS (Paginated)
+    # TEAM MEMBERS
     # --------------------------------------------------------
     @action(detail=False, methods=["get"], url_path=r"team/(?P<manager_emp_id>[^/.]+)")
     def get_team(self, request, manager_emp_id=None):
         """Return paginated list of team members under given manager."""
         try:
-            manager = Employee.objects.select_related("user", "department").get(user__emp_id__iexact=manager_emp_id)
+            manager = Employee.objects.select_related("user", "department").get(user__emp_id__iexact=manager_emp_id, is_deleted=False)
         except Employee.DoesNotExist:
             return Response({"error": f"Manager '{manager_emp_id}' not found."}, status=status.HTTP_404_NOT_FOUND)
-
         if manager.user.role != "Manager":
             return Response({"error": f"User '{manager_emp_id}' is not a Manager."}, status=status.HTTP_400_BAD_REQUEST)
 
-        team = Employee.objects.filter(manager=manager).select_related("user", "department")
+        team = Employee.objects.filter(manager=manager, is_deleted=False).select_related("user", "department")
         status_filter = request.query_params.get("status")
         dept_code = request.query_params.get("department_code")
         search_query = request.query_params.get("search")
@@ -243,20 +257,21 @@ class EmployeeViewSet(viewsets.ModelViewSet):
     # --------------------------------------------------------
     @action(detail=False, methods=["get"], url_path="summary")
     def summary(self, request):
-        """HR/Admin summary of department and employee stats."""
-        total_employees = Employee.objects.count()
-        active_employees = Employee.objects.filter(status="Active").count()
-        on_leave = Employee.objects.filter(status="On Leave").count()
-        inactive = Employee.objects.filter(status="Inactive").count()
-        managers = Employee.objects.filter(role="Manager", status="Active").count()
+        """HR/Admin summary excluding deleted employees."""
+        employees = Employee.objects.filter(is_deleted=False)
+        total_employees = employees.count()
+        active_employees = employees.filter(status="Active").count()
+        on_leave = employees.filter(status="On Leave").count()
+        inactive = employees.filter(status="Inactive").count()
+        managers = employees.filter(role="Manager", status="Active").count()
 
         departments = Department.objects.filter(is_active=True)
         dept_summary = [
             {
                 "department": d.name,
                 "code": d.code,
-                "active_employees": d.employees.filter(status="Active").count(),
-                "total_employees": d.employees.count(),
+                "active_employees": d.employees.filter(status="Active", is_deleted=False).count(),
+                "total_employees": d.employees.filter(is_deleted=False).count(),
             }
             for d in departments
         ]
@@ -283,18 +298,16 @@ class EmployeeCSVUploadView(APIView):
     @transaction.atomic
     def post(self, request, *args, **kwargs):
         if not (request.user.is_superuser or getattr(request.user, "role", "") == "Admin"):
-            return Response({"error": "Only Admins can upload employee CSV files."}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"error": "Only Admins can upload employee CSV files."},
+                            status=status.HTTP_403_FORBIDDEN)
 
         serializer = EmployeeCSVUploadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         result = serializer.save()
 
         logger.info(f"📁 CSV upload processed by {request.user.username}")
-        return Response(
-            {
-                "message": "✅ Employee CSV processed successfully.",
-                "uploaded_count": result["success_count"],
-                "errors": result["errors"],
-            },
-            status=status.HTTP_201_CREATED,
-        )
+        return Response({
+            "message": "✅ Employee CSV processed successfully.",
+            "uploaded_count": result.get("success_count", 0),
+            "errors": result.get("errors", []),
+        }, status=status.HTTP_201_CREATED)
