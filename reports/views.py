@@ -211,13 +211,13 @@ class MonthlyReportView(APIView):
 
 
 # ===========================================================
-# ✅ 3. MANAGER-WISE REPORT
+# ✅ 3. MANAGER-WISE REPORT (Fixed — Uses Evaluator Relation)
 # ===========================================================
 class ManagerReportView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        """Return weekly performance report for employees under a manager."""
+        """Return weekly performance report for employees evaluated by a specific manager."""
         manager_name = request.query_params.get("manager_name")
         week = int(request.query_params.get("week", timezone.now().isocalendar()[1]))
         year = int(request.query_params.get("year", timezone.now().year))
@@ -225,9 +225,33 @@ class ManagerReportView(APIView):
         if not manager_name:
             return Response({"error": "Please provide manager_name."}, status=status.HTTP_400_BAD_REQUEST)
 
-        employees = Employee.objects.filter(manager__user__first_name__iexact=manager_name)
+        # Split name into first and last name for matching
+        parts = manager_name.split()
+        first_name = parts[0]
+        last_name = parts[1] if len(parts) > 1 else ""
+
+        # ✅ Find manager by name and ensure they exist
+        manager = (
+            Employee.objects.filter(
+                user__first_name__iexact=first_name,
+                user__last_name__iexact=last_name,
+                user__role="Manager"
+            )
+            .select_related("user")
+            .first()
+        )
+
+        if not manager:
+            return Response(
+                {"error": f"Manager '{manager_name}' not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # ✅ Use evaluator = manager.user (correct foreign key)
         qs = PerformanceEvaluation.objects.filter(
-            employee__in=employees, week_number=week, year=year
+            evaluator=manager.user,
+            week_number=week,
+            year=year
         ).select_related("employee__user", "department")
 
         if not qs.exists():
@@ -236,7 +260,12 @@ class ManagerReportView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        ranked = qs.annotate(computed_rank=Window(expression=Rank(), order_by=F("total_score").desc()))
+        # Rank employees by total_score within manager’s team
+        ranked = qs.annotate(
+            computed_rank=Window(expression=Rank(), order_by=F("total_score").desc())
+        )
+
+        # Build response data
         data = [
             {
                 "manager_full_name": manager_name,
@@ -255,11 +284,14 @@ class ManagerReportView(APIView):
         ]
 
         return Response(
-            {"evaluation_period": f"Week {week}, {year}", "records": ManagerReportSerializer(data, many=True).data},
+            {
+                "manager_name": manager_name,
+                "evaluation_period": f"Week {week}, {year}",
+                "total_employees": len(data),
+                "records": ManagerReportSerializer(data, many=True).data,
+            },
             status=status.HTTP_200_OK,
         )
-
-
 # ===========================================================
 # ✅ 4. DEPARTMENT-WISE REPORT
 # ===========================================================

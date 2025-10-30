@@ -1,11 +1,10 @@
 # ===========================================================
-# employee/views.py ✅ Final Enhanced & Protected (Soft Delete + CSV Upload)
+# employee/views.py ✅ Final — Admin + Manager + Employee Profile Ready
 # Employee Performance Tracking System (EPTS)
 # ===========================================================
 
 from rest_framework import viewsets, status, permissions, filters
 from rest_framework.response import Response
-from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
@@ -21,6 +20,9 @@ from .serializers import (
     EmployeeSerializer,
     EmployeeCreateUpdateSerializer,
     EmployeeCSVUploadSerializer,
+    AdminProfileSerializer,
+    ManagerProfileSerializer,
+    EmployeeProfileSerializer,  # ✅ NEW
 )
 
 User = get_user_model()
@@ -28,7 +30,7 @@ logger = logging.getLogger("employee")
 
 
 # ===========================================================
-# ✅ PAGINATION (Frontend Friendly)
+# ✅ PAGINATION
 # ===========================================================
 class DefaultPagination(PageNumberPagination):
     page_size = 10
@@ -40,8 +42,6 @@ class DefaultPagination(PageNumberPagination):
 # ✅ DEPARTMENT VIEWSET
 # ===========================================================
 class DepartmentViewSet(viewsets.ModelViewSet):
-    """CRUD APIs for departments (Admin-only create/update/delete)."""
-
     queryset = Department.objects.all().order_by("name")
     serializer_class = DepartmentSerializer
     lookup_field = "code"
@@ -74,7 +74,6 @@ class DepartmentViewSet(viewsets.ModelViewSet):
         return super().update(request, *args, **kwargs)
 
     def destroy(self, request, *args, **kwargs):
-        """Soft delete (deactivate) department unless forced."""
         instance = self.get_object()
         if not self._is_admin(request):
             return Response({"error": "Only Admins can delete departments."}, status=status.HTTP_403_FORBIDDEN)
@@ -98,18 +97,14 @@ class DepartmentViewSet(viewsets.ModelViewSet):
 
 
 # ===========================================================
-# ✅ EMPLOYEE VIEWSET (Soft Delete Protected)
+# ✅ EMPLOYEE VIEWSET
 # ===========================================================
 class EmployeeViewSet(viewsets.ModelViewSet):
-    """Unified CRUD viewset for employees."""
-
-    queryset = Employee.objects.select_related("user", "department", "manager") \
-        .prefetch_related("team_members").filter(is_deleted=False)
+    queryset = Employee.objects.select_related("user", "department", "manager").prefetch_related("team_members").filter(is_deleted=False)
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = DefaultPagination
     lookup_field = "emp_id"
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    # keep filterset_fields for simple FK filter by id if needed, but we also handle flexible filtering in get_queryset
     filterset_fields = ["status"]
     search_fields = [
         "user__first_name", "user__last_name", "user__emp_id",
@@ -126,64 +121,40 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         return user.is_superuser or getattr(user, "role", "") in ["Admin", "Manager"]
 
     def get_queryset(self):
-        """
-        Base queryset with:
-         - is_deleted enforced
-         - role-based scoping (Manager sees own team, Employee sees self)
-         - flexible filtering for department (name/code/id) and manager (emp_id/username)
-         - optional role/status filters via query params
-        """
         request = self.request
         user = request.user
         qs = Employee.objects.select_related("user", "department", "manager").filter(is_deleted=False)
 
-        # Role scoping
         role = getattr(user, "role", "")
         if role == "Manager":
             qs = qs.filter(manager__user=user)
         elif role == "Employee":
             qs = qs.filter(user=user)
 
-        # Flexible department filter: name / code / id
         department_param = request.query_params.get("department")
         if department_param:
-            department_param = department_param.strip()
             dept_qs = Department.objects.filter(
                 Q(name__iexact=department_param)
                 | Q(code__iexact=department_param)
                 | Q(id__iexact=department_param)
             )
             dept = dept_qs.first()
-            if dept:
-                qs = qs.filter(department=dept)
-            else:
-                # Try partial name search fallback
-                qs = qs.filter(department__name__icontains=department_param)
+            qs = qs.filter(department=dept) if dept else qs.filter(department__name__icontains=department_param)
 
-        # Flexible manager filter: accept manager emp_id or username
         manager_param = request.query_params.get("manager")
         if manager_param:
-            manager_param = manager_param.strip()
             manager_emp = Employee.objects.select_related("user").filter(
                 Q(user__emp_id__iexact=manager_param) | Q(user__username__iexact=manager_param)
             ).first()
-            if manager_emp:
-                qs = qs.filter(manager=manager_emp)
-            else:
-                # If manager not found, return empty queryset
-                return qs.none()
+            qs = qs.filter(manager=manager_emp) if manager_emp else qs.none()
 
-        # Optional role filter (user.role)
         role_param = request.query_params.get("role")
         if role_param:
             qs = qs.filter(user__role__iexact=role_param.strip())
 
-        # Optional status filter (employee.status)
         status_param = request.query_params.get("status")
         if status_param:
             qs = qs.filter(status__iexact=status_param.strip())
-
-        # Search handled by SearchFilter; ordering by OrderingFilter
 
         return qs
 
@@ -234,7 +205,6 @@ class EmployeeViewSet(viewsets.ModelViewSet):
 
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
-        """Soft delete an employee (cannot reactivate)."""
         employee = self.get_object()
         user = request.user
 
@@ -253,100 +223,119 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         return Response({"message": f"🗑️ Employee '{employee.user.emp_id}' deleted successfully."},
                         status=status.HTTP_200_OK)
 
-    # --------------------------------------------------------
-    # TEAM MEMBERS
-    # --------------------------------------------------------
-    @action(detail=False, methods=["get"], url_path=r"team/(?P<manager_emp_id>[^/.]+)")
-    def get_team(self, request, manager_emp_id=None):
-        """Return paginated list of team members under given manager."""
-        try:
-            manager = Employee.objects.select_related("user", "department").get(user__emp_id__iexact=manager_emp_id, is_deleted=False)
-        except Employee.DoesNotExist:
-            return Response({"error": f"Manager '{manager_emp_id}' not found."}, status=status.HTTP_404_NOT_FOUND)
-        if manager.user.role != "Manager":
-            return Response({"error": f"User '{manager_emp_id}' is not a Manager."}, status=status.HTTP_400_BAD_REQUEST)
 
-        team = Employee.objects.filter(manager=manager, is_deleted=False).select_related("user", "department")
-        status_filter = request.query_params.get("status")
-        dept_code = request.query_params.get("department_code")
-        search_query = request.query_params.get("search")
+# ===========================================================
+# ✅ ADMIN PROFILE VIEW
+# ===========================================================
+class AdminProfileView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
 
-        if status_filter:
-            team = team.filter(status__iexact=status_filter)
-        if dept_code:
-            team = team.filter(department__code__iexact=dept_code)
-        if search_query:
-            team = team.filter(
-                models.Q(user__first_name__icontains=search_query)
-                | models.Q(user__last_name__icontains=search_query)
-                | models.Q(designation__icontains=search_query)
-            )
+    def get(self, request):
+        user = request.user
+        if getattr(user, "role", "") != "Admin":
+            return Response({"error": "Only Admins can access this API."}, status=status.HTTP_403_FORBIDDEN)
+        employee = getattr(user, "employee_profile", None)
+        if not employee:
+            return Response({"error": "Employee record not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = AdminProfileSerializer(employee, context={"request": request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
-        paginator = DefaultPagination()
-        paginated_team = paginator.paginate_queryset(team, request)
-        team_data = [
-            {
-                "emp_id": e.user.emp_id,
-                "name": f"{e.user.first_name} {e.user.last_name}".strip(),
-                "designation": e.designation,
-                "department": e.department.name if e.department else None,
-                "status": e.status,
-            }
-            for e in paginated_team
-        ]
+    @transaction.atomic
+    def patch(self, request):
+        user = request.user
+        if getattr(user, "role", "") != "Admin":
+            return Response({"error": "Only Admins can update profile."}, status=status.HTTP_403_FORBIDDEN)
 
-        return paginator.get_paginated_response({
-            "manager": {
-                "emp_id": manager.user.emp_id,
-                "name": f"{manager.user.first_name} {manager.user.last_name}".strip(),
-                "department": manager.department.name if manager.department else None,
-                "designation": manager.designation,
-            },
-            "total_team_members": team.count(),
-            "team_members": team_data,
-        })
+        employee = getattr(user, "employee_profile", None)
+        if not employee:
+            return Response({"error": "Employee record not found."}, status=status.HTTP_404_NOT_FOUND)
 
-    # --------------------------------------------------------
-    # HR DASHBOARD SUMMARY
-    # --------------------------------------------------------
-    @action(detail=False, methods=["get"], url_path="summary")
-    def summary(self, request):
-        """HR/Admin summary excluding deleted employees."""
-        employees = Employee.objects.filter(is_deleted=False)
-        total_employees = employees.count()
-        active_employees = employees.filter(status="Active").count()
-        on_leave = employees.filter(status="On Leave").count()
-        inactive = employees.filter(status="Inactive").count()
-        managers = employees.filter(role="Manager", status="Active").count()
-
-        departments = Department.objects.filter(is_active=True)
-        dept_summary = [
-            {
-                "department": d.name,
-                "code": d.code,
-                "active_employees": d.employees.filter(status="Active", is_deleted=False).count(),
-                "total_employees": d.employees.filter(is_deleted=False).count(),
-            }
-            for d in departments
-        ]
-
-        return Response({
-            "summary": {
-                "total_employees": total_employees,
-                "active_employees": active_employees,
-                "on_leave": on_leave,
-                "inactive": inactive,
-                "total_managers": managers,
-            },
-            "departments": dept_summary,
-        }, status=status.HTTP_200_OK)
+        serializer = AdminProfileSerializer(employee, data=request.data, partial=True, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        logger.info(f"🧑‍💼 Admin '{user.username}' updated profile.")
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 # ===========================================================
-# ✅ EMPLOYEE BULK CSV UPLOAD API
+# ✅ MANAGER PROFILE VIEW
+# ===========================================================
+class ManagerProfileView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if getattr(user, "role", "") != "Manager":
+            return Response({"error": "Only Managers can access this API."}, status=status.HTTP_403_FORBIDDEN)
+        employee = getattr(user, "employee_profile", None)
+        if not employee:
+            return Response({"error": "Employee record not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = ManagerProfileSerializer(employee, context={"request": request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @transaction.atomic
+    def patch(self, request):
+        user = request.user
+        if getattr(user, "role", "") != "Manager":
+            return Response({"error": "Only Managers can update profile."}, status=status.HTTP_403_FORBIDDEN)
+
+        employee = getattr(user, "employee_profile", None)
+        if not employee:
+            return Response({"error": "Employee record not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ManagerProfileSerializer(employee, data=request.data, partial=True, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        logger.info(f"👔 Manager '{user.username}' updated their profile.")
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def put(self, request):
+        return self.patch(request)
+
+
+# ===========================================================
+# ✅ EMPLOYEE PROFILE VIEW (NEW)
+# ===========================================================
+class EmployeeProfileView(APIView):
+    """API for Employee personal profile (view/update)."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if getattr(user, "role", "") != "Employee":
+            return Response({"error": "Only Employees can access this API."}, status=status.HTTP_403_FORBIDDEN)
+
+        employee = getattr(user, "employee_profile", None)
+        if not employee:
+            return Response({"error": "Employee record not found for this user."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = EmployeeProfileSerializer(employee, context={"request": request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @transaction.atomic
+    def patch(self, request):
+        user = request.user
+        if getattr(user, "role", "") != "Employee":
+            return Response({"error": "Only Employees can update profile."}, status=status.HTTP_403_FORBIDDEN)
+
+        employee = getattr(user, "employee_profile", None)
+        if not employee:
+            return Response({"error": "Employee record not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = EmployeeProfileSerializer(employee, data=request.data, partial=True, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        logger.info(f"👨‍💻 Employee '{user.username}' updated their profile.")
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def put(self, request):
+        return self.patch(request)
+
+
+# ===========================================================
+# ✅ EMPLOYEE BULK CSV UPLOAD VIEW
 # ===========================================================
 class EmployeeCSVUploadView(APIView):
-    """Upload and process a CSV file to bulk-create employees."""
     permission_classes = [permissions.IsAuthenticated]
 
     @transaction.atomic
