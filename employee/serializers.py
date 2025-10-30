@@ -1,8 +1,3 @@
-# ===========================================================
-# employee/serializers.py ✅ Final — Admin + Manager + Employee Profile Ready
-# Employee Performance Tracking System (EPTS)
-# ===========================================================
-
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.db import transaction, models
@@ -190,45 +185,18 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
         )
         return employee
 
-    @transaction.atomic
-    def update(self, instance, validated_data):
-        dept_code = validated_data.pop("department_code", None)
-        manager_value = validated_data.pop("manager", None)
-        role = validated_data.get("role")
 
-        if dept_code:
-            department = Department.objects.filter(
-                models.Q(id__iexact=dept_code)
-                | models.Q(code__iexact=dept_code)
-                | models.Q(name__iexact=dept_code)
-            ).first()
-            if not department:
-                raise serializers.ValidationError({"department_code": f"Department '{dept_code}' not found."})
-            instance.department = department
-            instance.user.department = department
-
-        if manager_value:
-            manager = Employee.objects.filter(user__emp_id__iexact=manager_value).first()
-            if not manager:
-                raise serializers.ValidationError({"manager": f"Manager '{manager_value}' not found."})
-            if manager.user.role not in ["Manager", "Admin"]:
-                raise serializers.ValidationError({"manager": "Assigned manager must be Manager/Admin."})
-            instance.manager = manager
-
-        if role:
-            instance.user.role = role
-
-        user = instance.user
-        for field in ["email", "first_name", "last_name", "role"]:
-            if field in validated_data:
-                setattr(user, field, validated_data.pop(field))
-        user.save()
-
-        for field, value in validated_data.items():
-            setattr(instance, field, value)
-        instance.save()
-
-        return instance
+# ===========================================================
+# ✅ COMMON IMAGE VALIDATION
+# ===========================================================
+def validate_image_file(value):
+    if value:
+        ext = os.path.splitext(value.name)[1].lower()
+        if ext not in [".jpg", ".jpeg", ".png"]:
+            raise serializers.ValidationError("Only JPG and PNG images are allowed.")
+        if value.size > 2 * 1024 * 1024:  # 2MB limit
+            raise serializers.ValidationError("Profile picture size must not exceed 2MB.")
+    return value
 
 
 # ===========================================================
@@ -240,6 +208,7 @@ class AdminProfileSerializer(serializers.ModelSerializer):
     last_name = serializers.CharField(source="user.last_name", required=False)
     email = serializers.EmailField(source="user.email", required=False)
     department = serializers.CharField(source="department.name", read_only=True)
+    department_code = serializers.ReadOnlyField(source="department.code")
     role = serializers.CharField(read_only=True)
     profile_picture_url = serializers.SerializerMethodField()
 
@@ -247,7 +216,7 @@ class AdminProfileSerializer(serializers.ModelSerializer):
         model = Employee
         fields = [
             "emp_id", "first_name", "last_name", "email", "role",
-            "department", "designation", "joining_date", "status",
+            "department", "department_code", "designation", "joining_date", "status",
             "contact_number", "dob", "profile_picture", "profile_picture_url",
             "address_line1", "city", "state", "pincode",
         ]
@@ -258,27 +227,25 @@ class AdminProfileSerializer(serializers.ModelSerializer):
         if obj.profile_picture and hasattr(obj.profile_picture, "url"):
             return request.build_absolute_uri(obj.profile_picture.url) if request else obj.profile_picture.url
         return None
-    
+
+    def validate_profile_picture(self, value):
+        return validate_image_file(value)
+
     def update(self, instance, validated_data):
-        """Handle updates for both Employee and linked User models."""
-        user_data = validated_data.pop("user", {})  # Extract nested user updates if any
-
-        # Update User fields safely
+        user_data = validated_data.pop("user", {})
         user = instance.user
-        if user_data:
-            for field, value in user_data.items():
-                setattr(user, field, value)
-            user.save()
+        for field, value in user_data.items():
+            setattr(user, field, value)
+        user.save()
 
-        # Update Employee fields
         for field, value in validated_data.items():
             setattr(instance, field, value)
         instance.save()
-
         return instance
 
+
 # ===========================================================
-# ✅ MANAGER PROFILE SERIALIZER (with writable nested fields)
+# ✅ MANAGER PROFILE SERIALIZER
 # ===========================================================
 class ManagerProfileSerializer(serializers.ModelSerializer):
     emp_id = serializers.CharField(source="user.emp_id", read_only=True)
@@ -286,6 +253,7 @@ class ManagerProfileSerializer(serializers.ModelSerializer):
     last_name = serializers.CharField(source="user.last_name", required=False)
     email = serializers.EmailField(source="user.email", required=False)
     department = serializers.CharField(source="department.name", read_only=True)
+    department_code = serializers.ReadOnlyField(source="department.code")
     role = serializers.CharField(read_only=True)
     profile_picture_url = serializers.SerializerMethodField()
 
@@ -293,7 +261,7 @@ class ManagerProfileSerializer(serializers.ModelSerializer):
         model = Employee
         fields = [
             "emp_id", "first_name", "last_name", "email", "role", "gender",
-            "department", "designation", "joining_date", "status",
+            "department", "department_code", "designation", "joining_date", "status",
             "contact_number", "dob", "profile_picture", "profile_picture_url",
             "address_line1", "address_line2", "city", "state", "pincode",
         ]
@@ -305,22 +273,19 @@ class ManagerProfileSerializer(serializers.ModelSerializer):
             return request.build_absolute_uri(obj.profile_picture.url) if request else obj.profile_picture.url
         return None
 
+    def validate_profile_picture(self, value):
+        return validate_image_file(value)
+
     def update(self, instance, validated_data):
-        """Update both Employee and nested User fields safely."""
         user_data = validated_data.pop("user", {})
         user = instance.user
+        for field, value in user_data.items():
+            setattr(user, field, value)
+        user.save()
 
-        # Update nested User fields (first_name, last_name, email)
-        if user_data:
-            for field, value in user_data.items():
-                setattr(user, field, value)
-            user.save()
-
-        # Update Employee fields (manager-specific)
         for field, value in validated_data.items():
             setattr(instance, field, value)
         instance.save()
-
         return instance
 
 
@@ -333,6 +298,7 @@ class EmployeeProfileSerializer(serializers.ModelSerializer):
     last_name = serializers.CharField(source="user.last_name", required=False)
     email = serializers.EmailField(source="user.email", required=False)
     department = serializers.CharField(source="department.name", read_only=True)
+    department_code = serializers.ReadOnlyField(source="department.code")
     role = serializers.CharField(read_only=True)
     manager_name = serializers.SerializerMethodField()
     profile_picture_url = serializers.SerializerMethodField()
@@ -342,11 +308,11 @@ class EmployeeProfileSerializer(serializers.ModelSerializer):
         fields = [
             "emp_id", "first_name", "last_name", "email", "gender",
             "contact_number", "dob", "profile_picture", "profile_picture_url",
-            "role", "department", "designation", "project_name",
+            "role", "department", "department_code", "designation", "project_name",
             "joining_date", "reporting_manager_name", "manager_name", "status",
             "address_line1", "address_line2", "city", "state", "pincode",
         ]
-        read_only_fields = ["emp_id", "department", "role", "status", "manager_name"]
+        read_only_fields = ["emp_id", "department", "department_code", "role", "status", "manager_name"]
 
     def get_manager_name(self, obj):
         if obj.manager and hasattr(obj.manager, "user"):
@@ -359,22 +325,8 @@ class EmployeeProfileSerializer(serializers.ModelSerializer):
             return request.build_absolute_uri(obj.profile_picture.url) if request else obj.profile_picture.url
         return None
 
-    def validate_dob(self, value):
-        if value and value > timezone.now().date():
-            raise serializers.ValidationError("Date of birth cannot be in the future.")
-        return value
-
-    def validate_pincode(self, value):
-        if value and not value.isdigit():
-            raise serializers.ValidationError("Pincode must contain only digits.")
-        return value
-
     def validate_profile_picture(self, value):
-        if value:
-            ext = os.path.splitext(value.name)[1].lower()
-            if ext not in [".jpg", ".jpeg", ".png"]:
-                raise serializers.ValidationError("Only JPG and PNG images are allowed.")
-        return value
+        return validate_image_file(value)
 
     @transaction.atomic
     def update(self, instance, validated_data):
