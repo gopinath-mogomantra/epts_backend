@@ -1,5 +1,5 @@
 # ===========================================================
-# users/views.py ✅ Final Enhanced & Cleaned
+# users/views.py ✅ Final Enhanced & Cleaned (Auto Employee Sync)
 # Employee Performance Tracking System (EPTS)
 # ===========================================================
 
@@ -103,7 +103,7 @@ class RegisterView(generics.CreateAPIView):
         if User.objects.filter(email__iexact=email).exists():
             return Response({"error": "Email already exists."}, status=400)
 
-        # ✅ Create user
+        # ✅ Create User (serializer handles this safely)
         user = serializer.save()
 
         # Auto-fill joining_date if missing
@@ -111,21 +111,40 @@ class RegisterView(generics.CreateAPIView):
             user.joining_date = timezone.now().date()
             user.save(update_fields=["joining_date"])
 
-        # ✅ Create or sync Employee record (if not via signal)
-        if not Employee.objects.filter(user=user).exists():
-            Employee.objects.create(
-                user=user,
-                emp_id=user.emp_id,
-                first_name=user.first_name,
-                last_name=user.last_name,
-                email=user.email,
-                department=user.department,
-                manager=user.manager,
-                status="Active",
-                joining_date=user.joining_date,
-            )
+        # -----------------------------------------------------------
+        # ✅ Employee Auto-Sync (Safe get_or_create)
+        # -----------------------------------------------------------
+        emp_defaults = {
+            "department": user.department,
+            "role": getattr(user, "role", "Employee"),
+            "status": "Active" if user.is_active else "Inactive",
+            "joining_date": user.joining_date or timezone.now().date(),
+        }
 
-        # ✅ Optional email notification
+        # Resolve manager (Employee instance)
+        if getattr(user, "manager", None):
+            mgr_emp = Employee.objects.filter(user=user.manager, is_deleted=False).first()
+            if mgr_emp:
+                emp_defaults["manager"] = mgr_emp
+
+        employee_obj, created = Employee.objects.get_or_create(
+            user=user,
+            defaults=emp_defaults
+        )
+
+        # If previously soft-deleted → restore
+        if not created and getattr(employee_obj, "is_deleted", False):
+            employee_obj.is_deleted = False
+            employee_obj.status = emp_defaults["status"]
+            employee_obj.department = emp_defaults["department"]
+            employee_obj.role = emp_defaults["role"]
+            employee_obj.manager = emp_defaults.get("manager")
+            employee_obj.joining_date = emp_defaults["joining_date"]
+            employee_obj.save(update_fields=["is_deleted", "status", "department", "role", "manager", "joining_date"])
+
+        # -----------------------------------------------------------
+        # ✅ Send Email Notification (optional)
+        # -----------------------------------------------------------
         try:
             send_mail(
                 subject="EPTS Account Created",
@@ -163,13 +182,6 @@ class ChangePasswordView(APIView):
     """
     POST /api/users/change-password/
     Allows authenticated users to securely change their password.
-    
-    Expected Request Body:
-    {
-        "old_password": "OldPass@123",
-        "new_password": "NewPass@456",
-        "confirm_password": "NewPass@456"
-    }
     """
     permission_classes = [IsAuthenticated]
 
@@ -187,10 +199,7 @@ class ChangePasswordView(APIView):
 
         logger.info(f"🔑 Password changed successfully for {request.user.emp_id}")
         return Response(
-            {
-                "message": result.get("message", "✅ Password changed successfully!"),
-                "status": "success"
-            },
+            {"message": result.get("message", "✅ Password changed successfully!"), "status": "success"},
             status=status.HTTP_200_OK,
         )
 
@@ -212,7 +221,6 @@ class ProfileView(APIView):
         if not updates:
             return Response({"message": "No valid fields to update."}, status=400)
 
-        # Email and phone validation
         if "email" in updates:
             try:
                 validate_email(updates["email"])

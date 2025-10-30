@@ -161,6 +161,13 @@ class User(AbstractBaseUser, PermissionsMixin):
         help_text="User role"
     )
 
+    temp_password = models.CharField(
+        max_length=128,
+        blank=True,
+        null=True,
+        help_text="Stores auto-generated temporary password for testing/logging."
+    )
+
     # ---------- CONTACT ----------
     phone = models.CharField(
         max_length=15,

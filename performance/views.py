@@ -1,10 +1,11 @@
 # ===========================================================
-# performance/views.py (Final — Frontend + Business Logic Aligned)
+# performance/views.py (Final — with /api/performance/dashboard/ Added)
 # ===========================================================
 from rest_framework import viewsets, permissions, status, filters
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from django.db.models import Max, F, Avg, Window
+from rest_framework.decorators import action
+from django.db.models import Max, F, Avg, Window, Count
 from django.db.models.functions import Rank
 from django.db import IntegrityError
 from django.utils import timezone
@@ -17,7 +18,7 @@ from .serializers import (
     PerformanceDashboardSerializer,
     PerformanceRankSerializer,
 )
-from employee.models import Employee
+from employee.models import Employee, Department
 from notifications.models import Notification
 
 logger = logging.getLogger(__name__)
@@ -119,12 +120,10 @@ class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
 # ===========================================================
 class EmployeePerformanceByIdView(APIView):
     """Return all performance evaluations for a specific employee."""
-
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, emp_id):
         role = getattr(request.user, "role", "").lower()
-
         if role not in ["admin", "manager", "employee"]:
             return Response({"error": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
 
@@ -176,7 +175,6 @@ class EmployeePerformanceByIdView(APIView):
 # ===========================================================
 class PerformanceSummaryView(APIView):
     """Weekly summary of departments and leaderboard."""
-
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
@@ -233,7 +231,6 @@ class PerformanceSummaryView(APIView):
 # ===========================================================
 class EmployeeDashboardView(APIView):
     """Displays logged-in employee’s personal performance trend."""
-
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
@@ -274,7 +271,6 @@ class EmployeeDashboardView(APIView):
 # ===========================================================
 class EmployeePerformanceView(APIView):
     """View all evaluations for a given employee."""
-
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, emp_id):
@@ -311,3 +307,86 @@ class EmployeePerformanceView(APIView):
         }
 
         return Response({"header": header, "evaluations": serializer.data}, status=status.HTTP_200_OK)
+
+
+# ===========================================================
+# ✅ ORGANIZATION PERFORMANCE DASHBOARD (NEW)
+# ===========================================================
+class PerformanceDashboardView(APIView):
+    """
+    GET /api/performance/dashboard/
+    Returns top performers, weak performers, and department-level averages.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        try:
+            evaluations = PerformanceEvaluation.objects.select_related("employee__user", "department")
+            if not evaluations.exists():
+                return Response({"message": "No performance data available."}, status=status.HTTP_200_OK)
+
+            total_employees = evaluations.values("employee").distinct().count()
+            total_departments = Department.objects.filter(is_active=True).count()
+            org_avg = round(evaluations.aggregate(avg=Avg("average_score"))["avg"] or 0, 2)
+
+            # Department averages
+            dept_scores = (
+                evaluations.values("department__name")
+                .annotate(avg_score=Avg("average_score"))
+                .order_by("-avg_score")
+            )
+            department_average_scores = [
+                {
+                    "department": d["department__name"],
+                    "avg_score": round(d["avg_score"], 2) if d["avg_score"] else 0,
+                }
+                for d in dept_scores
+                if d["department__name"]
+            ]
+
+            # Top and weak performers
+            employee_scores = (
+                evaluations.values(
+                    "employee__user__emp_id",
+                    "employee__user__first_name",
+                    "employee__user__last_name",
+                    "department__name",
+                )
+                .annotate(avg_score=Avg("average_score"))
+                .order_by("-avg_score")
+            )
+
+            top_3_employees = [
+                {
+                    "emp_id": e["employee__user__emp_id"],
+                    "name": f"{e['employee__user__first_name']} {e['employee__user__last_name']}".strip(),
+                    "department": e["department__name"],
+                    "average_score": round(e["avg_score"], 2),
+                }
+                for e in employee_scores[:3]
+            ]
+
+            weak_3_employees = [
+                {
+                    "emp_id": e["employee__user__emp_id"],
+                    "name": f"{e['employee__user__first_name']} {e['employee__user__last_name']}".strip(),
+                    "department": e["department__name"],
+                    "average_score": round(e["avg_score"], 2),
+                }
+                for e in employee_scores.reverse()[:3]
+            ]
+
+            return Response(
+                {
+                    "organization_average_score": org_avg,
+                    "total_departments": total_departments,
+                    "total_employees": total_employees,
+                    "top_3_employees": top_3_employees,
+                    "weak_3_employees": weak_3_employees,
+                    "department_average_scores": department_average_scores,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            logger.exception("Error generating performance dashboard: %s", e)
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

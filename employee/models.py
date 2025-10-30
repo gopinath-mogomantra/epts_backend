@@ -1,5 +1,5 @@
 # ===========================================================
-# employee/models.py ✅ Final — Soft Delete + Validation Logic
+# employee/models.py ✅ Final — Soft Delete + Safe Manager Validation
 # ===========================================================
 from django.db import models
 from django.conf import settings
@@ -90,7 +90,7 @@ class Employee(models.Model):
     location = models.CharField(max_length=100, blank=True, null=True)
     designation = models.CharField(max_length=100, blank=True, null=True)
 
-    # ✅ New Soft Delete Field
+    # ✅ Soft Delete Flag
     is_deleted = models.BooleanField(default=False, help_text="Soft delete flag for employee.")
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -117,40 +117,64 @@ class Employee(models.Model):
     # -----------------------------------------------------------
     def clean(self):
         """Ensure business rules and relational integrity."""
+        # Skip redundant clean if marked as serializer validated
+        if hasattr(self, "_validated_from_serializer"):
+            return
+
+        # Deleted record cannot be modified
         if self.is_deleted:
             raise ValidationError({"employee": "❌ This employee record has been deleted. No modifications allowed."})
 
-        if not self.user or not self.user.email:
+        if not self.user or not getattr(self.user, "email", None):
             raise ValidationError({"user": "Linked User must have a valid email."})
 
+        # Duplicate email check
         if Employee.objects.exclude(id=self.id).filter(user__email=self.user.email).exists():
             raise ValidationError({"user": "An employee with this email already exists."})
 
+        # Self-reference check
         if self.manager and self.manager == self:
             raise ValidationError({"manager": "An employee cannot be their own manager."})
 
-        if self.manager and self.manager.role not in ["Manager", "Admin"]:
-            raise ValidationError({"manager": "Assigned manager must have role 'Manager' or 'Admin'."})
+        # Manager validity
+        if self.manager:
+            manager_role = getattr(self.manager.user, "role", None)
+            if manager_role not in ["Manager", "Admin"]:
+                raise ValidationError({"manager": ["Assigned manager must have role 'Manager' or 'Admin'."]})
 
+        # Department validity
         if not self.department:
             raise ValidationError({"department": "Employee must belong to a department."})
+
+        # Joining date validity
+        if self.joining_date and self.joining_date > timezone.now().date():
+            raise ValidationError({"joining_date": "Joining date cannot be in the future."})
 
     # -----------------------------------------------------------
     # ✅ Save Override
     # -----------------------------------------------------------
     def save(self, *args, **kwargs):
-        """Apply validation and prevent operations on deleted employees."""
+        """
+        Apply validation and prevent operations on deleted employees.
+        If already validated from serializer, skip redundant clean().
+        """
         if self.is_deleted:
             raise ValidationError({"employee": "❌ Cannot modify a deleted employee."})
 
+        try:
+            if not hasattr(self, "_validated_from_serializer"):
+                self.full_clean()
+        except ValidationError as e:
+            raise
+
         is_new = self.pk is None
-        self.full_clean()
         super().save(*args, **kwargs)
 
-        # Auto update department's employee count
+        # Update department count
         if self.department:
             self.department.update_employee_count()
 
+        # If department changed, update old department count
         if not is_new and hasattr(self, "_old_department_id"):
             old_dept = Department.objects.filter(id=self._old_department_id).first()
             if old_dept and old_dept != self.department:

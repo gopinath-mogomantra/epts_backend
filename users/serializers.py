@@ -1,5 +1,5 @@
 # ===========================================================
-# users/serializers.py ✅ Final Frontend-Aligned & Signal-Free
+# users/serializers.py ✅ Final Enhanced (Manager Sync + Validations)
 # Employee Performance Tracking System (EPTS)
 # ===========================================================
 
@@ -12,7 +12,9 @@ import random
 import string
 import logging
 import re
-from employee.models import Department
+from datetime import datetime, date
+
+from employee.models import Department, Employee  # Safe imports
 
 User = get_user_model()
 logger = logging.getLogger("users")
@@ -23,9 +25,8 @@ logger = logging.getLogger("users")
 # ===========================================================
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
-    Safe and PK-secure login serializer.
-    Supports username, emp_id, or email.
-    Avoids Django authenticate() to prevent FK errors.
+    Secure login serializer supporting username, emp_id, or email.
+    Avoids authenticate() to prevent FK errors.
     """
 
     username_field = "username"
@@ -41,7 +42,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 {"detail": "Both username (emp_id/username/email) and password are required."}
             )
 
-        # Try to match user by username, emp_id, or email
+        # Match by username / emp_id / email
         user = User.objects.filter(
             models.Q(username__iexact=login_input)
             | models.Q(emp_id__iexact=login_input)
@@ -51,41 +52,42 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         if not user:
             raise serializers.ValidationError({"detail": "Invalid username or password."})
 
-        # Check account lock
-        if user.account_locked:
-            if user.locked_at:
+        # Account lock check
+        if getattr(user, "account_locked", False):
+            if getattr(user, "locked_at", None):
                 elapsed = timezone.now() - user.locked_at
-                remaining_seconds = max(0, self.LOCK_DURATION_HOURS * 3600 - elapsed.total_seconds())
-                if remaining_seconds > 0:
-                    remaining_minutes = int(remaining_seconds // 60) % 60
-                    remaining_hours = int(remaining_seconds // 3600)
-                    raise serializers.ValidationError({
-                        "detail": f"Account locked. Try again after {remaining_hours}h {remaining_minutes}m."
-                    })
+                remaining = max(0, self.LOCK_DURATION_HOURS * 3600 - elapsed.total_seconds())
+                if remaining > 0:
+                    hrs, mins = divmod(int(remaining // 60), 60)
+                    raise serializers.ValidationError(
+                        {"detail": f"Account locked. Try again after {hrs}h {mins}m."}
+                    )
                 else:
-                    user.unlock_account()
+                    if hasattr(user, "unlock_account"):
+                        user.unlock_account()
 
-        # ✅ Use check_password instead of authenticate() (bypasses USERNAME_FIELD issue)
+        # Validate password
         if not user.check_password(password):
-            user.increment_failed_attempts()
-            if user.account_locked:
+            if hasattr(user, "increment_failed_attempts"):
+                user.increment_failed_attempts()
+            if getattr(user, "account_locked", False):
                 raise serializers.ValidationError({
                     "detail": f"Too many failed attempts. Account locked for {self.LOCK_DURATION_HOURS} hours."
                 })
-            remaining = max(0, self.LOCK_THRESHOLD - user.failed_login_attempts)
+            remaining = max(0, self.LOCK_THRESHOLD - getattr(user, "failed_login_attempts", 0))
             raise serializers.ValidationError({"detail": f"Invalid credentials. {remaining} attempt(s) left."})
 
-        # Reset failed attempts
-        user.reset_login_attempts()
+        # Reset failed login attempts
+        if hasattr(user, "reset_login_attempts"):
+            user.reset_login_attempts()
 
-        # Enforce password change
-        if user.force_password_change:
+        if getattr(user, "force_password_change", False):
             raise serializers.ValidationError({
                 "force_password_change": True,
                 "detail": "Password change required before login."
             })
 
-        # ✅ Manually create JWT since authenticate() is not used
+        # JWT creation
         refresh = self.get_token(user)
         access = refresh.access_token
 
@@ -103,11 +105,10 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 "department": user.department.name if user.department else None,
                 "manager": user.manager.username if user.manager else None,
                 "status": user.status,
-                "is_verified": user.is_verified,
+                "is_verified": getattr(user, "is_verified", False),
                 "is_active": user.is_active,
-            }
+            },
         }
-
         return data
 
     @classmethod
@@ -126,10 +127,12 @@ class RegisterSerializer(serializers.ModelSerializer):
     department_name = serializers.CharField(source="department.name", read_only=True)
     temp_password = serializers.CharField(read_only=True)
 
+    # Accept flexible department fields
     department = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     department_code = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     department_name_input = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     manager = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    joining_date = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     class Meta:
         model = User
@@ -154,11 +157,11 @@ class RegisterSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "emp_id", "temp_password"]
 
-    # ---------------- FULL NAME ----------------
+    # ---------------- Computed Fields ----------------
     def get_full_name(self, obj):
         return f"{obj.first_name or ''} {obj.last_name or ''}".strip()
 
-    # ---------------- VALIDATIONS ----------------
+    # ---------------- Field Validations ----------------
     def validate_email(self, value):
         if User.objects.filter(email__iexact=value).exists():
             raise serializers.ValidationError("Email already exists.")
@@ -169,69 +172,95 @@ class RegisterSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Phone number already exists.")
         return value
 
-    def validate_role(self, value):
-        if value not in dict(User.ROLE_CHOICES):
-            raise serializers.ValidationError("Invalid role.")
-        return value
+    def validate_joining_date(self, value):
+        """Must be valid date in past or today."""
+        if not value:
+            return None
+        try:
+            jd = value if isinstance(value, date) else datetime.strptime(value, "%Y-%m-%d").date()
+        except Exception:
+            raise serializers.ValidationError("joining_date must be in YYYY-MM-DD format.")
+        if jd > timezone.now().date():
+            raise serializers.ValidationError("joining_date cannot be in the future.")
+        return jd
 
     def validate(self, attrs):
         request = self.context.get("request")
         if request and hasattr(request, "user"):
-            if not request.user.is_admin() and not request.user.is_manager():
-                raise serializers.ValidationError(
-                    {"permission": "Only Admin or Manager can create users."}
-                )
+            role = getattr(request.user, "role", "")
+            if not (request.user.is_superuser or role in ["Admin", "Manager"]):
+                raise serializers.ValidationError({"permission": "Only Admin or Manager can create users."})
         return attrs
 
     # ---------------- CREATE USER ----------------
     @transaction.atomic
     def create(self, validated_data):
-        from employee.models import Employee  # ✅ Safe import (avoids circular dependency)
-
-        # Pop department/manager info
         dept_value = (
             validated_data.pop("department", None)
             or validated_data.pop("department_code", None)
             or validated_data.pop("department_name_input", None)
         )
         manager_value = validated_data.pop("manager", None)
+        joining_date_value = validated_data.pop("joining_date", None)
 
-        department_instance = None
-        manager_instance = None
+        joining_date = None
+        if joining_date_value:
+            joining_date = self.validate_joining_date(joining_date_value)
 
-        # ✅ Resolve Department (code / name / id)
-        if dept_value:
-            dept_value = str(dept_value).strip()
-            department_instance = Department.objects.filter(
-                models.Q(code__iexact=dept_value)
-                | models.Q(name__iexact=dept_value)
-                | models.Q(id__iexact=dept_value)
-            ).first()
-            if not department_instance:
-                raise serializers.ValidationError({
-                    "department": f"Department '{dept_value}' not found. "
-                                  f"Available: {[d.name for d in Department.objects.all()]}"
-                })
-        else:
-            raise serializers.ValidationError({"department": "Department is required for Employees."})
+        # ✅ Resolve Department
+        if not dept_value:
+            raise serializers.ValidationError({"department": "Department is required."})
+        dept_value = str(dept_value).strip()
+        department_instance = Department.objects.filter(
+            models.Q(code__iexact=dept_value)
+            | models.Q(name__iexact=dept_value)
+            | models.Q(id__iexact=dept_value)
+        ).first()
+        if not department_instance:
+            raise serializers.ValidationError({"department": f"Department '{dept_value}' not found."})
+        if not getattr(department_instance, "is_active", True):
+            raise serializers.ValidationError({"department": f"Department '{department_instance.name}' is inactive."})
 
-        # ✅ Resolve Manager (emp_id or username)
+        # ✅ Resolve Manager (active, not deleted, valid role)
+        manager_employee = None
         if manager_value:
-            manager_instance = (
+            manager_value = str(manager_value).strip()
+            manager_user = (
                 User.objects.filter(emp_id__iexact=manager_value).first()
                 or User.objects.filter(username__iexact=manager_value).first()
             )
-            if not manager_instance:
-                raise serializers.ValidationError({
-                    "manager": f"No manager found matching '{manager_value}'."
-                })
+            if not manager_user:
+                raise serializers.ValidationError({"manager": f"Manager '{manager_value}' not found as User."})
 
-        # ✅ Generate new emp_id
+            manager_employee = Employee.objects.filter(user=manager_user).first()
+            if manager_employee and getattr(manager_employee, "is_deleted", False):
+                raise serializers.ValidationError({
+                    "manager": f"Manager '{manager_user.username}' exists but is deleted. Cannot assign deleted manager."
+                })
+            if not manager_employee:
+                if manager_user.role not in ["Manager", "Admin"]:
+                    raise serializers.ValidationError({
+                        "manager": f"Manager '{manager_user.username}' must have role 'Manager' or 'Admin'."
+                    })
+                if not manager_user.is_active:
+                    raise serializers.ValidationError({
+                        "manager": f"Manager '{manager_user.username}' is inactive and cannot be assigned."
+                    })
+                manager_employee = Employee.objects.create(
+                    user=manager_user,
+                    department=manager_user.department,
+                    manager=None,
+                    role=manager_user.role,
+                    status="Active",
+                    joining_date=getattr(manager_user, "joining_date", timezone.now().date()),
+                )
+
+        # ✅ Generate Emp ID
         last_user = User.objects.select_for_update().order_by("-id").first()
         last_num = int(last_user.emp_id.replace("EMP", "")) if last_user and last_user.emp_id else 0
         new_emp_id = f"EMP{last_num + 1:04d}"
 
-        # ✅ Temporary password
+        # ✅ Temporary Password
         first_name = validated_data.get("first_name", "User").capitalize()
         random_part = "".join(random.choices(string.ascii_letters + string.digits, k=4))
         temp_password = f"{first_name}@{random_part}"
@@ -241,25 +270,26 @@ class RegisterSerializer(serializers.ModelSerializer):
             emp_id=new_emp_id,
             password=temp_password,
             department=department_instance,
-            manager=manager_instance,
+            manager=manager_user if manager_value else None,
             **validated_data,
         )
         user.force_password_change = True
-        user.save(update_fields=["force_password_change"])
+        if joining_date:
+            user.joining_date = joining_date
+        user.save()
 
-        # ✅ Create matching Employee record (replaces signal logic)
-        Employee.objects.create(
-            user=user,
-            emp_id=user.emp_id,
-            first_name=user.first_name,
-            last_name=user.last_name,
-            email=user.email,
-            department=department_instance,
-            manager=manager_instance,
-        )
+        # ✅ Create Employee
+        emp_kwargs = {
+            "user": user,
+            "department": department_instance,
+            "manager": manager_employee,
+            "status": "Active",
+            "joining_date": joining_date or timezone.now().date(),
+        }
+        Employee.objects.create(**emp_kwargs)
 
-        # ✅ Attach temp password to serializer response
         user.temp_password = temp_password
+        logger.info(f"✅ User {user.emp_id} created successfully with temp password.")
         return user
 
     # ---------------- RESPONSE FORMAT ----------------
@@ -275,10 +305,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 
 # ===========================================================
-# ✅ 3. CHANGE PASSWORD SERIALIZER
-# ===========================================================
-# ===========================================================
-# ✅ 3. CHANGE PASSWORD SERIALIZER (Enhanced with Confirm Password)
+# ✅ 3. CHANGE PASSWORD SERIALIZER (Enhanced)
 # ===========================================================
 class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(write_only=True, required=True)
@@ -286,34 +313,30 @@ class ChangePasswordSerializer(serializers.Serializer):
     confirm_password = serializers.CharField(write_only=True, required=True)
 
     def validate_old_password(self, value):
-        """Check if old password is correct."""
         user = self.context["request"].user
         if not user.check_password(value):
             raise serializers.ValidationError("Old password is incorrect.")
         return value
 
     def validate_new_password(self, value):
-        """Enforce strong password rules."""
         if len(value) < 8:
             raise serializers.ValidationError("Password must be at least 8 characters long.")
         if not re.search(r"[A-Z]", value):
-            raise serializers.ValidationError("Password must include at least one uppercase letter.")
+            raise serializers.ValidationError("Include at least one uppercase letter.")
         if not re.search(r"[a-z]", value):
-            raise serializers.ValidationError("Password must include at least one lowercase letter.")
+            raise serializers.ValidationError("Include at least one lowercase letter.")
         if not re.search(r"\d", value):
-            raise serializers.ValidationError("Password must include at least one digit.")
+            raise serializers.ValidationError("Include at least one digit.")
         if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", value):
-            raise serializers.ValidationError("Password must include at least one special character.")
+            raise serializers.ValidationError("Include at least one special character.")
         return value
 
     def validate(self, attrs):
-        """Ensure new and confirm passwords match."""
         if attrs.get("new_password") != attrs.get("confirm_password"):
-            raise serializers.ValidationError({"confirm_password": "New password and confirmation do not match."})
+            raise serializers.ValidationError({"confirm_password": "New and confirm password must match."})
         return attrs
 
     def save(self, **kwargs):
-        """Change user password after validation."""
         user = self.context["request"].user
         user.set_password(self.validated_data["new_password"])
         user.force_password_change = False
@@ -364,32 +387,16 @@ class ProfileSerializer(serializers.ModelSerializer):
             "is_active",
         ]
 
-    # -------------------------------------------
-    # Computed fields
-    # -------------------------------------------
     def get_full_name(self, obj):
         return f"{obj.first_name or ''} {obj.last_name or ''}".strip()
 
     def get_joining_date(self, obj):
-        if obj.joining_date:
-            return obj.joining_date.date() if hasattr(obj.joining_date, "date") else obj.joining_date
-        return None
+        jd = getattr(obj, "joining_date", None)
+        return jd.isoformat() if hasattr(jd, "isoformat") else jd
 
-    # -------------------------------------------
-    # Safe update override
-    # -------------------------------------------
     def update(self, instance, validated_data):
-        editable_fields = [
-            "first_name",
-            "last_name",
-            "department",
-            "phone",
-            "status",
-            "role",
-        ]
-        for field in editable_fields:
+        for field in ["first_name", "last_name", "department", "phone", "status", "role"]:
             if field in validated_data:
                 setattr(instance, field, validated_data[field])
-
         instance.save()
         return instance

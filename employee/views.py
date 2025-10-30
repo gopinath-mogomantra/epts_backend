@@ -12,6 +12,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from django.contrib.auth import get_user_model
 from rest_framework.pagination import PageNumberPagination
 from django.db import models, transaction
+from django.db.models import Q
 import logging
 
 from .models import Department, Employee
@@ -108,7 +109,8 @@ class EmployeeViewSet(viewsets.ModelViewSet):
     pagination_class = DefaultPagination
     lookup_field = "emp_id"
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ["department", "manager", "status"]
+    # keep filterset_fields for simple FK filter by id if needed, but we also handle flexible filtering in get_queryset
+    filterset_fields = ["status"]
     search_fields = [
         "user__first_name", "user__last_name", "user__emp_id",
         "designation", "contact_number", "department__name"
@@ -120,18 +122,70 @@ class EmployeeViewSet(viewsets.ModelViewSet):
             return EmployeeCreateUpdateSerializer
         return EmployeeSerializer
 
-    def get_queryset(self):
-        user = self.request.user
-        qs = super().get_queryset().filter(is_deleted=False)
-        role = getattr(user, "role", "")
-        if role == "Manager":
-            return qs.filter(manager__user=user)
-        elif role == "Employee":
-            return qs.filter(user=user)
-        return qs
-
     def _has_admin_rights(self, user):
         return user.is_superuser or getattr(user, "role", "") in ["Admin", "Manager"]
+
+    def get_queryset(self):
+        """
+        Base queryset with:
+         - is_deleted enforced
+         - role-based scoping (Manager sees own team, Employee sees self)
+         - flexible filtering for department (name/code/id) and manager (emp_id/username)
+         - optional role/status filters via query params
+        """
+        request = self.request
+        user = request.user
+        qs = Employee.objects.select_related("user", "department", "manager").filter(is_deleted=False)
+
+        # Role scoping
+        role = getattr(user, "role", "")
+        if role == "Manager":
+            qs = qs.filter(manager__user=user)
+        elif role == "Employee":
+            qs = qs.filter(user=user)
+
+        # Flexible department filter: name / code / id
+        department_param = request.query_params.get("department")
+        if department_param:
+            department_param = department_param.strip()
+            dept_qs = Department.objects.filter(
+                Q(name__iexact=department_param)
+                | Q(code__iexact=department_param)
+                | Q(id__iexact=department_param)
+            )
+            dept = dept_qs.first()
+            if dept:
+                qs = qs.filter(department=dept)
+            else:
+                # Try partial name search fallback
+                qs = qs.filter(department__name__icontains=department_param)
+
+        # Flexible manager filter: accept manager emp_id or username
+        manager_param = request.query_params.get("manager")
+        if manager_param:
+            manager_param = manager_param.strip()
+            manager_emp = Employee.objects.select_related("user").filter(
+                Q(user__emp_id__iexact=manager_param) | Q(user__username__iexact=manager_param)
+            ).first()
+            if manager_emp:
+                qs = qs.filter(manager=manager_emp)
+            else:
+                # If manager not found, return empty queryset
+                return qs.none()
+
+        # Optional role filter (user.role)
+        role_param = request.query_params.get("role")
+        if role_param:
+            qs = qs.filter(user__role__iexact=role_param.strip())
+
+        # Optional status filter (employee.status)
+        status_param = request.query_params.get("status")
+        if status_param:
+            qs = qs.filter(status__iexact=status_param.strip())
+
+        # Search handled by SearchFilter; ordering by OrderingFilter
+
+        return qs
 
     def get_object(self):
         emp_id = self.kwargs.get("emp_id")

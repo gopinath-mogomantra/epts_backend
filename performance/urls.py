@@ -1,6 +1,5 @@
 # ===========================================================
-# performance/urls.py ✅ (Frontend-Aligned & Production-Ready)
-# Employee Performance Tracking System (EPTS)
+# performance/urls.py ✅ Correctly mapped
 # ===========================================================
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
@@ -10,56 +9,27 @@ from .views import (
     PerformanceSummaryView,
     EmployeeDashboardView,
     EmployeePerformanceView,
+    PerformanceDashboardView,  # ← Org-level
 )
 
-# -----------------------------------------------------------
-# 🌐 App Namespace
-# -----------------------------------------------------------
-app_name = "performance"
-
-# -----------------------------------------------------------
-# 📘 ROUTE SUMMARY
-# -----------------------------------------------------------
-"""
-Performance Management Endpoints:
--------------------------------------------------------------
-🔹 /api/performance/evaluations/             → CRUD (Admin/Manager)
-🔹 /api/performance/evaluations/<emp_id>/    → List employee evaluations
-🔹 /api/performance/summary/                 → Weekly + Department summary
-🔹 /api/performance/dashboard/               → Employee’s personal dashboard
-🔹 /api/performance/employee/<emp_id>/       → Admin/Manager detailed view
--------------------------------------------------------------
-Each route is authenticated and role-restricted using DRF permissions.
-"""
-
-# -----------------------------------------------------------
-# 🚀 DRF Router Configuration
-# -----------------------------------------------------------
 router = DefaultRouter()
-router.register(
-    r"evaluations",
-    PerformanceEvaluationViewSet,
-    basename="performance-evaluation",
-)
+router.register(r"evaluations", PerformanceEvaluationViewSet, basename="performance")
 
-# -----------------------------------------------------------
-# 🛠️ URL Patterns
-# -----------------------------------------------------------
 urlpatterns = [
-    # 🔹 Custom Employee-Specific Evaluations
-    path(
-        "evaluations/<str:emp_id>/",
-        EmployeePerformanceByIdView.as_view(),
-        name="employee_performance_by_id",
-    ),
-
-    # 🔹 Auto-registered CRUD routes
     path("", include(router.urls)),
 
-    # 🔹 Performance Summary & Analytics
+    # Admin/Manager summary
     path("summary/", PerformanceSummaryView.as_view(), name="performance_summary"),
 
-    # 🔹 Employee Dashboard & Individual Performance
+    # ✅ Organization-level dashboard (Admin / Manager)
+    path("dashboard/organization/", PerformanceDashboardView.as_view(), name="performance_dashboard"),
+
+    # ✅ Employee self dashboard
     path("dashboard/", EmployeeDashboardView.as_view(), name="employee_dashboard"),
-    path("employee/<str:emp_id>/", EmployeePerformanceView.as_view(), name="employee_performance"),
+
+    # Individual employee by ID
+    path("employee/<str:emp_id>/", EmployeePerformanceView.as_view(), name="employee_performance_view"),
+
+    # Employee performance by ID (alternate)
+    path("evaluations/<str:emp_id>/", EmployeePerformanceByIdView.as_view(), name="performance_by_emp"),
 ]

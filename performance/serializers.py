@@ -1,5 +1,5 @@
 # ===========================================================
-# performance/serializers.py (Final — Business Logic + UI Aligned)
+# performance/serializers.py ✅ Final Fixed — Business Logic + UI Aligned
 # ===========================================================
 from rest_framework import serializers
 from django.utils import timezone
@@ -127,17 +127,19 @@ class PerformanceEvaluationSerializer(serializers.ModelSerializer):
 
 
 # ===========================================================
-# ✅ CREATE / UPDATE SERIALIZER
+# ✅ CREATE / UPDATE SERIALIZER (Fixed for "employee": "EMPxxxx" input)
 # ===========================================================
 class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
-    employee_emp_id = serializers.CharField(write_only=True)
+    # Accept both 'employee' and 'employee_emp_id' inputs
+    employee = serializers.CharField(write_only=True, required=False)
+    employee_emp_id = serializers.CharField(write_only=True, required=False)
     evaluator_emp_id = serializers.CharField(write_only=True, required=False, allow_blank=True, allow_null=True)
     department_code = serializers.CharField(write_only=True, required=False, allow_blank=True, allow_null=True)
 
     class Meta:
         model = PerformanceEvaluation
         fields = [
-            "id", "employee_emp_id", "evaluator_emp_id", "department_code",
+            "id", "employee", "employee_emp_id", "evaluator_emp_id", "department_code",
             "evaluation_type", "review_date", "evaluation_period",
             "communication_skills", "multitasking", "team_skills",
             "technical_skills", "job_knowledge", "productivity", "creativity",
@@ -147,40 +149,43 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
         ]
 
     # ---------------------- Validations ----------------------
-    def validate_employee_emp_id(self, value):
-        try:
-            emp = Employee.objects.select_related("user", "department").get(user__emp_id__iexact=value)
-        except Employee.DoesNotExist:
-            raise serializers.ValidationError(f"Employee with emp_id '{value}' not found.")
-        self.context["employee"] = emp
-        return value
+    def validate(self, attrs):
+        # ✅ Accept employee via either "employee" or "employee_emp_id"
+        emp_value = attrs.get("employee") or attrs.get("employee_emp_id")
+        if not emp_value:
+            raise serializers.ValidationError({"employee": "Employee ID is required."})
 
-    def validate_evaluator_emp_id(self, value):
-        if not value:
-            # fallback: current logged in user
+        try:
+            emp = Employee.objects.select_related("user", "department").get(user__emp_id__iexact=emp_value)
+        except Employee.DoesNotExist:
+            raise serializers.ValidationError({"employee": f"Employee with emp_id '{emp_value}' not found."})
+        self.context["employee"] = emp
+
+        # ✅ Evaluator handling
+        evaluator_value = attrs.get("evaluator_emp_id")
+        if evaluator_value:
+            try:
+                evaluator = User.objects.get(emp_id__iexact=evaluator_value)
+            except User.DoesNotExist:
+                raise serializers.ValidationError({"evaluator_emp_id": f"Evaluator '{evaluator_value}' not found."})
+            self.context["evaluator"] = evaluator
+        else:
             request = self.context.get("request")
             if request and hasattr(request, "user"):
                 self.context["evaluator"] = request.user
-            return value
-        try:
-            evaluator = User.objects.get(emp_id__iexact=value)
-        except User.DoesNotExist:
-            raise serializers.ValidationError(f"Evaluator '{value}' not found.")
-        self.context["evaluator"] = evaluator
-        return value
 
-    def validate_department_code(self, value):
-        if not value:
-            return value
-        try:
-            dept = Department.objects.get(code__iexact=value, is_active=True)
-        except Department.DoesNotExist:
-            raise serializers.ValidationError(f"Department '{value}' not found or inactive.")
-        self.context["department"] = dept
-        return value
+        # ✅ Department handling
+        dept_code = attrs.get("department_code")
+        if dept_code:
+            try:
+                dept = Department.objects.get(code__iexact=dept_code, is_active=True)
+            except Department.DoesNotExist:
+                raise serializers.ValidationError({"department_code": f"Department '{dept_code}' not found or inactive."})
+            self.context["department"] = dept
+        else:
+            self.context["department"] = emp.department
 
-    def validate(self, attrs):
-        emp = self.context.get("employee")
+        # ✅ Prevent duplicate evaluations for same week/year/type
         review_date = attrs.get("review_date", timezone.now().date())
         evaluation_type = attrs.get("evaluation_type", "Manager")
 
@@ -193,11 +198,11 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
         if self.instance:
             existing = existing.exclude(pk=self.instance.pk)
         if existing.exists():
-            raise serializers.ValidationError(
-                f"Evaluation already exists for {emp.user.emp_id} (Week {week_number}, {year}, {evaluation_type})."
-            )
+            raise serializers.ValidationError({
+                "duplicate": f"Evaluation already exists for {emp.user.emp_id} (Week {week_number}, {year}, {evaluation_type})."
+            })
 
-        # Metric validation — ensure 0–100 integer values
+        # ✅ Metric validation — ensure 0–100 integer values
         for field, value in attrs.items():
             if field.endswith("_skills") or field in [
                 "job_knowledge", "productivity", "creativity",
@@ -207,27 +212,25 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
                 try:
                     num = int(value)
                 except (TypeError, ValueError):
-                    raise serializers.ValidationError({field: "Metric value must be an integer between 0–100."})
+                    raise serializers.ValidationError({field: "Metric must be an integer between 0–100."})
                 if not (0 <= num <= 100):
-                    raise serializers.ValidationError({field: "Metric scores must be between 0–100."})
+                    raise serializers.ValidationError({field: "Metric must be between 0–100."})
 
+        # ✅ Role restriction: Only Admin or Manager can evaluate
         request = self.context.get("request")
         if request and hasattr(request.user, "role"):
             if request.user.role not in ["Admin", "Manager"]:
                 raise serializers.ValidationError({"role": "Only Admin or Manager can submit evaluations."})
+
         return attrs
 
     # ---------------------- Create ----------------------
     def create(self, validated_data):
         emp = self.context.get("employee")
-        evaluator = self.context.get("evaluator", None)
-        department = self.context.get("department", emp.department if emp else None)
+        evaluator = self.context.get("evaluator")
+        department = self.context.get("department")
 
-        request = self.context.get("request")
-        if not evaluator and request:
-            evaluator = request.user
-
-        for f in ["employee_emp_id", "evaluator_emp_id", "department_code"]:
+        for f in ["employee", "employee_emp_id", "evaluator_emp_id", "department_code"]:
             validated_data.pop(f, None)
 
         instance = PerformanceEvaluation.objects.create(
@@ -237,7 +240,7 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
             **validated_data,
         )
 
-        instance.auto_rank_trigger()  # refresh ranking after save
+        instance.auto_rank_trigger()
         return instance
 
     # ---------------------- Update ----------------------

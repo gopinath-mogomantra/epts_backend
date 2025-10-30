@@ -284,39 +284,48 @@ SESSION_COOKIE_SAMESITE = "Lax"
 # -------------------------------------------------------------------
 # LOGGING CONFIGURATION
 # -------------------------------------------------------------------
+# ===========================================================
+# ✅ CENTRALIZED LOGGING CONFIGURATION (Employee Creation Logs)
+# ===========================================================
+# ===========================================================
+# ✅ CENTRALIZED LOGGING (Employee Creation Auto Logs)
+# ===========================================================
 import os
 
 LOG_DIR = os.path.join(BASE_DIR, "logs")
-if not os.path.exists(LOG_DIR):
-    os.makedirs(LOG_DIR)
+os.makedirs(LOG_DIR, exist_ok=True)
 
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
-        "verbose": {"format": "[%(asctime)s] %(levelname)s — %(message)s"},
+        "standard": {
+            "format": "[{asctime}] [{levelname}] {name}: {message}",
+            "style": "{",
+        },
     },
     "handlers": {
-        "temp_password_file": {
+        "employee_file": {
             "level": "INFO",
             "class": "logging.FileHandler",
-            "filename": os.path.join(LOG_DIR, "user_log.txt"),
-            "formatter": "verbose",
-            "encoding": "utf-8",
+            "filename": os.path.join(LOG_DIR, "employee_creation.log"),
+            "formatter": "standard",
         },
         "console": {
+            "level": "INFO",
             "class": "logging.StreamHandler",
-            "formatter": "verbose",
+            "formatter": "standard",
         },
     },
     "loggers": {
-        "temp_password_logger": {
-            "handlers": ["temp_password_file", "console"],
+        "employee_creation": {
+            "handlers": ["employee_file", "console"],
             "level": "INFO",
             "propagate": False,
         },
     },
 }
+
 
 # -------------------------------------------------------------------
 # EMAIL CONFIGURATION (For notifications)

@@ -1,5 +1,5 @@
 # ===========================================================
-# employee/serializers.py ✅ Final Cleaned & Feature-Enhanced
+# employee/serializers.py ✅ Final Fixed & Frontend-Aligned
 # Employee Performance Tracking System (EPTS)
 # ===========================================================
 
@@ -8,7 +8,7 @@ from django.contrib.auth import get_user_model
 from django.db import transaction, models
 from .models import Department, Employee
 import re, csv, io
-from datetime import datetime, date
+from datetime import datetime
 
 User = get_user_model()
 
@@ -28,29 +28,29 @@ class DepartmentSerializer(serializers.ModelSerializer):
         read_only_fields = ["created_at", "updated_at", "employee_count"]
 
     def get_employee_count(self, obj):
+        """Return total active employees in this department."""
         return obj.employees.filter(status="Active").count()
 
     def validate_name(self, value):
-        value = value.strip().title()
-        qs = Department.objects.filter(name__iexact=value)
+        qs = Department.objects.filter(name__iexact=value.strip())
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
         if qs.exists():
             raise serializers.ValidationError("Department with this name already exists.")
-        return value
+        return value.strip().title()
 
     def validate_code(self, value):
         if not value:
             return value
-        value = value.strip().upper()
-        qs = Department.objects.filter(code__iexact=value)
+        qs = Department.objects.filter(code__iexact=value.strip())
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
         if qs.exists():
             raise serializers.ValidationError("Department code already exists.")
-        return value
+        return value.strip().upper()
 
     def validate_is_active(self, value):
+        """Prevent deactivation if department has active employees."""
         if self.instance and not value:
             if Employee.objects.filter(department=self.instance, status="Active").exists():
                 raise serializers.ValidationError("Cannot deactivate a department with active employees.")
@@ -72,7 +72,7 @@ class UserSummarySerializer(serializers.ModelSerializer):
 
 
 # ===========================================================
-# ✅ EMPLOYEE SERIALIZER (Detailed Read-Only)
+# ✅ EMPLOYEE SERIALIZER (Read-Only)
 # ===========================================================
 class EmployeeSerializer(serializers.ModelSerializer):
     user = UserSummarySerializer(read_only=True)
@@ -107,6 +107,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
         return "Not Assigned"
 
     def get_team_size(self, obj):
+        """Return number of direct reports under this employee."""
         return Employee.objects.filter(manager=obj).count()
 
 
@@ -118,8 +119,7 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
     first_name = serializers.CharField(write_only=True)
     last_name = serializers.CharField(write_only=True)
     role = serializers.ChoiceField(choices=User.ROLE_CHOICES, write_only=True)
-    department_code = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    department_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    department_code = serializers.CharField(write_only=True, required=False)
     manager = serializers.CharField(write_only=True, required=False, allow_blank=True)
     emp_id = serializers.ReadOnlyField(source="user.emp_id")
 
@@ -127,14 +127,12 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
         model = Employee
         fields = [
             "id", "email", "emp_id", "first_name", "last_name", "role",
-            "contact_number", "department_code", "department_name",
-            "manager", "designation", "status", "joining_date",
+            "contact_number", "department_code", "manager", "designation",
+            "status", "joining_date",
         ]
 
-    # =======================================================
-    # ✅ VALIDATIONS
-    # =======================================================
     def validate_contact_number(self, value):
+        """Validate Indian +91 format and uniqueness."""
         if not value:
             return value
         pattern = r"^\+91[6-9]\d{9}$"
@@ -147,19 +145,12 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("This contact number is already used.")
         return value
 
-    def validate_joining_date(self, value):
-        """Prevent joining date from being a future date."""
-        if value and value > date.today():
-            raise serializers.ValidationError("Joining date cannot be in the future.")
-        return value
-
     # =======================================================
     # ✅ CREATE
     # =======================================================
     @transaction.atomic
     def create(self, validated_data):
         dept_code = validated_data.pop("department_code", None)
-        dept_name = validated_data.pop("department_name", None)
         manager_emp_id = validated_data.pop("manager", None)
         email = validated_data.pop("email")
         first_name = validated_data.pop("first_name")
@@ -167,25 +158,17 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
         role = validated_data.pop("role")
 
         # --- Department Validation ---
-        if not dept_code and not dept_name:
-            raise serializers.ValidationError({
-                "department": "Either 'department_code' or 'department_name' must be provided."
-            })
-        if dept_code and dept_name:
-            raise serializers.ValidationError({
-                "department": "Provide only one of 'department_code' or 'department_name', not both."
-            })
-
-        dept_identifier = dept_code or dept_name
-        department = Department.objects.filter(
-            models.Q(id__iexact=dept_identifier)
-            | models.Q(code__iexact=dept_identifier)
-            | models.Q(name__iexact=dept_identifier)
-        ).first()
-        if not department:
-            raise serializers.ValidationError({"department": f"Department '{dept_identifier}' not found."})
-        if not department.is_active:
-            raise serializers.ValidationError({"department": f"Department '{department.name}' is inactive."})
+        department = None
+        if dept_code:
+            department = Department.objects.filter(
+                models.Q(id__iexact=dept_code)
+                | models.Q(code__iexact=dept_code)
+                | models.Q(name__iexact=dept_code)
+            ).first()
+            if not department:
+                raise serializers.ValidationError({"department_code": f"Department '{dept_code}' not found."})
+            if not department.is_active:
+                raise serializers.ValidationError({"department_code": f"Department '{dept_code}' is inactive."})
 
         # --- Manager Validation ---
         manager = None
@@ -194,7 +177,7 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
             if not manager:
                 raise serializers.ValidationError({"manager": f"Manager '{manager_emp_id}' not found."})
             if manager.user.role not in ["Manager", "Admin"]:
-                raise serializers.ValidationError({"manager": "Assigned manager must be Manager/Admin."})
+                raise serializers.ValidationError({"manager": f"Assigned manager must be Manager/Admin."})
 
         # --- Email Uniqueness ---
         if User.objects.filter(email__iexact=email).exists():
@@ -208,6 +191,7 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
             role=role,
             department=department,
         )
+
         employee = Employee.objects.create(
             user=user,
             department=department,
@@ -222,27 +206,20 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
     @transaction.atomic
     def update(self, instance, validated_data):
         dept_code = validated_data.pop("department_code", None)
-        dept_name = validated_data.pop("department_name", None)
         manager_value = validated_data.pop("manager", None)
         role = validated_data.get("role")
 
         # --- Department Update ---
-        if dept_code or dept_name:
-            if dept_code and dept_name:
-                raise serializers.ValidationError({
-                    "department": "Provide only one of 'department_code' or 'department_name', not both."
-                })
-            dept_identifier = dept_code or dept_name
+        if dept_code:
             department = Department.objects.filter(
-                models.Q(id__iexact=dept_identifier)
-                | models.Q(code__iexact=dept_identifier)
-                | models.Q(name__iexact=dept_identifier)
+                models.Q(id__iexact=dept_code)
+                | models.Q(code__iexact=dept_code)
+                | models.Q(name__iexact=dept_code)
             ).first()
             if not department:
-                raise serializers.ValidationError({"department": f"Department '{dept_identifier}' not found."})
+                raise serializers.ValidationError({"department_code": f"Department '{dept_code}' not found."})
             instance.department = department
             instance.user.department = department
-            instance.user.save(update_fields=["department"])
 
         # --- Manager Update ---
         if manager_value:
@@ -252,16 +229,14 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
             if manager.user.role not in ["Manager", "Admin"]:
                 raise serializers.ValidationError({"manager": "Assigned manager must be Manager/Admin."})
             instance.manager = manager
-            instance.save(update_fields=["manager"])
 
         # --- Role Update ---
         if role:
             instance.user.role = role
-            instance.user.save(update_fields=["role"])
 
         # --- Sync User Fields ---
         user = instance.user
-        for field in ["email", "first_name", "last_name"]:
+        for field in ["email", "first_name", "last_name", "role"]:
             if field in validated_data:
                 setattr(user, field, validated_data.pop(field))
         user.save()
