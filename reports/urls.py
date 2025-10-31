@@ -1,6 +1,6 @@
-# ===========================================================
+# ===============================================
 # reports/urls.py ✅ (Frontend-Aligned & Production-Ready)
-# ===========================================================
+# ===============================================
 
 from django.urls import path
 from .views import (
@@ -10,6 +10,7 @@ from .views import (
     ManagerReportView,
     ExportWeeklyExcelView,
     ExportMonthlyExcelView,
+    PrintPerformanceReportView,  # ✅ Added PDF Export
     CachedReportListView,
     CachedReportArchiveView,
     CachedReportRestoreView,
@@ -30,7 +31,8 @@ Reporting & Analytics Endpoints:
 🔹 /api/reports/manager/                    → Manager-wise weekly report (placeholder)
 🔹 /api/reports/export/weekly-excel/        → Weekly Excel export (.xlsx)
 🔹 /api/reports/export/monthly-excel/       → Monthly Excel export (.xlsx)
-🔹 /api/reports/cache/                      → Cached report listing (Admin/Manager)
+🔹 /api/reports/print/<emp_id>/             → Employee-specific PDF report
+🔹 /api/reports/cache/                      → Cached report listing
 🔹 /api/reports/cache/<id>/archive/         → Archive cached report
 🔹 /api/reports/cache/<id>/restore/         → Restore cached report
 -------------------------------------------------------------
@@ -45,15 +47,16 @@ urlpatterns = [
     path("weekly/", WeeklyReportView.as_view(), name="weekly_report"),
     path("monthly/", MonthlyReportView.as_view(), name="monthly_report"),
 
-    # 🔹 Department-Wise Report
+    # 🔹 Department & Manager Reports
     path("department/", DepartmentReportView.as_view(), name="department_report"),
-
-    # 🔹 Manager-Wise Report (placeholder)
     path("manager/", ManagerReportView.as_view(), name="manager_report"),
 
     # 🔹 Excel Exports
     path("export/weekly-excel/", ExportWeeklyExcelView.as_view(), name="export_weekly_excel"),
     path("export/monthly-excel/", ExportMonthlyExcelView.as_view(), name="export_monthly_excel"),
+
+    # 🔹 PDF Export (New)
+    path("print/<str:emp_id>/", PrintPerformanceReportView.as_view(), name="print_employee_report"),
 
     # 🔹 Cached Reports
     path("cache/", CachedReportListView.as_view(), name="cached_reports_dashboard"),
