@@ -1,5 +1,5 @@
 # ===========================================================
-# performance/signals.py (Final — Auto Ranking on Save)
+# performance/signals.py
 # ===========================================================
 # Purpose:
 # Automatically re-rank employees within each department
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 @receiver(post_save, sender=PerformanceEvaluation)
 def auto_rank_on_save(sender, instance, created, **kwargs):
     """
-    ✅ Automatically recalculates department-wise rankings whenever
+    Automatically recalculates department-wise rankings whenever
     a PerformanceEvaluation is created or updated.
 
     Ranking Logic:
@@ -33,14 +33,14 @@ def auto_rank_on_save(sender, instance, created, **kwargs):
     week = getattr(instance, "week_number", None)
     year = getattr(instance, "year", None)
 
-    # 🚫 Skip incomplete or invalid records
+    # Skip incomplete or invalid records
     if not dept or not week or not year:
         logger.warning(
             f"[Auto-Rank] Skipped invalid evaluation (Dept={dept}, Week={week}, Year={year})."
         )
         return
 
-    # ⚙️ Use transaction.on_commit to avoid race conditions
+    # Use transaction.on_commit to avoid race conditions
     def _update_ranks():
         try:
             evaluations = (
@@ -63,7 +63,7 @@ def auto_rank_on_save(sender, instance, created, **kwargs):
                 PerformanceEvaluation.objects.bulk_update(bulk_updates, ["rank"])
 
             logger.info(
-                f"🏁 [Auto-Rank] Department={dept.code} | Week={week} | Year={year} | Updated={len(bulk_updates)}"
+                f"[Auto-Rank] Department={dept.code} | Week={week} | Year={year} | Updated={len(bulk_updates)}"
             )
 
         except (OperationalError, ProgrammingError) as db_err:

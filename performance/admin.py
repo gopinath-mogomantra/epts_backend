@@ -1,5 +1,5 @@
 # ===============================================
-# performance/admin.py (Final Verified — Admin & Frontend Ready)
+# performance/admin.py
 # ===============================================
 # Django Admin configuration for the Performance Evaluation module.
 # Features:

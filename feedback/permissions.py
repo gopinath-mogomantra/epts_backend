@@ -5,7 +5,7 @@ logger = logging.getLogger(__name__)
 
 
 # ===========================================================
-# ✅ IsAdminOrManager
+# IsAdminOrManager
 # ===========================================================
 class IsAdminOrManager(permissions.BasePermission):
     """
@@ -23,19 +23,19 @@ class IsAdminOrManager(permissions.BasePermission):
         user = request.user
 
         if not user or not user.is_authenticated:
-            logger.debug("❌ Access denied: unauthenticated user.")
+            logger.debug("Access denied: unauthenticated user.")
             return False
 
         role = getattr(user, "role", "")
         is_allowed = user.is_superuser or role in ("Admin", "Manager")
 
         if not is_allowed:
-            logger.debug(f"⚠️ Access denied for role '{role}' on {view.__class__.__name__}")
+            logger.debug(f"Access denied for role '{role}' on {view.__class__.__name__}")
         return is_allowed
 
 
 # ===========================================================
-# ✅ IsCreatorOrAdmin
+# IsCreatorOrAdmin
 # ===========================================================
 class IsCreatorOrAdmin(permissions.BasePermission):
     """
@@ -51,20 +51,20 @@ class IsCreatorOrAdmin(permissions.BasePermission):
         user = request.user
 
         if not user or not user.is_authenticated:
-            logger.debug("❌ Access denied: unauthenticated object access.")
+            logger.debug("Access denied: unauthenticated object access.")
             return False
 
-        # ✅ Always allow safe read-only methods
+        # Always allow safe read-only methods
         if request.method in permissions.SAFE_METHODS:
             return True
 
-        # ✅ Admins and superusers have full access
+        # Admins and superusers have full access
         if user.is_superuser or getattr(user, "role", "") == "Admin":
             return True
 
-        # ✅ Allow creator to modify their own feedback
+        # Allow creator to modify their own feedback
         if hasattr(obj, "created_by") and obj.created_by == user:
             return True
 
-        logger.debug(f"⚠️ Permission denied for user {user.username} on {obj.__class__.__name__}")
+        logger.debug(f"Permission denied for user {user.username} on {obj.__class__.__name__}")
         return False

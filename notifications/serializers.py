@@ -1,5 +1,5 @@
 # ===========================================================
-# notifications/serializers.py (Final — Fully Optimized)
+# notifications/serializers.py 
 # ===========================================================
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
@@ -20,24 +20,24 @@ class NotificationSerializer(serializers.ModelSerializer):
     - Timestamp formatting for UI
     """
 
-    # 🔹 Nested employee info (receiver)
+    # Nested employee info (receiver)
     employee = UserSummarySerializer(read_only=True)
 
-    # 🔹 Readable department name (for broadcast messages)
+    # Readable department name (for broadcast messages)
     department_name = serializers.CharField(
         source="department.name", read_only=True, default=""
     )
 
-    # 🔹 Computed UI helper fields
+    # Computed UI helper fields
     status_display = serializers.SerializerMethodField()
     meta_display = serializers.SerializerMethodField()
     category_icon = serializers.SerializerMethodField()
 
-    # 🔹 Formatted timestamps
+    # Formatted timestamps
     created_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
     read_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True, required=False)
 
-    # 🔹 Optional “time since created” (if added in model)
+    # Optional “time since created” (if added in model)
     time_since_created = serializers.ReadOnlyField()
 
     class Meta:
@@ -73,7 +73,7 @@ class NotificationSerializer(serializers.ModelSerializer):
         ]
 
     # -------------------------------------------------------
-    # 🧩 Computed Field Methods
+    # Computed Field Methods
     # -------------------------------------------------------
     def get_status_display(self, obj):
         """Return status text for frontend tags."""
@@ -103,7 +103,7 @@ class NotificationSerializer(serializers.ModelSerializer):
         return icon_map.get(obj.category, "📢")
 
     # -------------------------------------------------------
-    # 🧠 Auto-assign User + Department
+    # Auto-assign User + Department
     # -------------------------------------------------------
     def create(self, validated_data):
         """

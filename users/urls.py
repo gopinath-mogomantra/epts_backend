@@ -1,6 +1,5 @@
 # ===========================================================
-# users/urls.py ✅ (Frontend-Aligned & Production-Ready)
-# Employee Performance Tracking System (EPTS)
+# users/urls.py
 # ===========================================================
 
 from django.urls import path
@@ -34,25 +33,25 @@ app_name = "users"
 # 6. /api/users/roles/                  → Get available roles
 # 7. /api/users/list/                   → Paginated user list (Admin only)
 # 8. /api/users/reset-password/         → Admin resets user password (existing)
-# 9. /api/users/regenerate-password/    → Admin regenerates temporary password ✅
+# 9. /api/users/regenerate-password/    → Admin regenerates temporary password 
 # 10. /api/users/<emp_id>/              → Admin view/update/delete specific user
 # ===========================================================
 
 urlpatterns = [
-    # 🔐 Authentication
+    # Authentication
     path("login/", ObtainTokenPairView.as_view(), name="token_obtain_pair"),
     path("token/refresh/", RefreshTokenView.as_view(), name="token_refresh"),
 
-    # 🧑‍💻 Registration & Profile Management
+    # Registration & Profile Management
     path("register/", RegisterView.as_view(), name="user_register"),
     path("profile/", ProfileView.as_view(), name="user_profile"),
     path("change-password/", ChangePasswordView.as_view(), name="change_password"),
 
-    # 🏷️ Roles & Directory
+    # Roles & Directory
     path("roles/", RoleListView.as_view(), name="role_list"),
     path("list/", UserListView.as_view(), name="user_list"),
 
-    # 🔁 Admin Utilities
+    # Admin Utilities
     path("reset-password/", reset_password, name="reset_password"),
     path("regenerate-password/", regenerate_password, name="regenerate_password"),
     path("login-details/", AdminUserListView.as_view(), name="login_details"),

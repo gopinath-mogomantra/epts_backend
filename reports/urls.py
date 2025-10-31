@@ -1,5 +1,5 @@
 # ===============================================
-# reports/urls.py ✅ (Frontend-Aligned & Production-Ready)
+# reports/urls.py
 # ===============================================
 
 from django.urls import path
@@ -10,17 +10,17 @@ from .views import (
     ManagerReportView,
     ExportWeeklyExcelView,
     ExportMonthlyExcelView,
-    PrintPerformanceReportView,  # ✅ Added PDF Export
+    PrintPerformanceReportView, 
     CachedReportListView,
     CachedReportArchiveView,
     CachedReportRestoreView,
 )
 
-# 🌐 Namespace
+# Namespace
 app_name = "reports"
 
 # ===========================================================
-# 📘 ROUTE SUMMARY
+# ROUTE SUMMARY
 # ===========================================================
 """
 Reporting & Analytics Endpoints:
@@ -40,25 +40,25 @@ All routes are authenticated (Admin/Manager access).
 """
 
 # ===========================================================
-# 🚀 URL Patterns
+# URL Patterns
 # ===========================================================
 urlpatterns = [
-    # 🔹 Weekly & Monthly Reports
+    # Weekly & Monthly Reports
     path("weekly/", WeeklyReportView.as_view(), name="weekly_report"),
     path("monthly/", MonthlyReportView.as_view(), name="monthly_report"),
 
-    # 🔹 Department & Manager Reports
+    # Department & Manager Reports
     path("department/", DepartmentReportView.as_view(), name="department_report"),
     path("manager/", ManagerReportView.as_view(), name="manager_report"),
 
-    # 🔹 Excel Exports
+    # Excel Exports
     path("export/weekly-excel/", ExportWeeklyExcelView.as_view(), name="export_weekly_excel"),
     path("export/monthly-excel/", ExportMonthlyExcelView.as_view(), name="export_monthly_excel"),
 
-    # 🔹 PDF Export (New)
+    # PDF Export (New)
     path("print/<str:emp_id>/", PrintPerformanceReportView.as_view(), name="print_employee_report"),
 
-    # 🔹 Cached Reports
+    # Cached Reports
     path("cache/", CachedReportListView.as_view(), name="cached_reports_dashboard"),
     path("cache/<int:pk>/archive/", CachedReportArchiveView.as_view(), name="cached_report_archive"),
     path("cache/<int:pk>/restore/", CachedReportRestoreView.as_view(), name="cached_report_restore"),

@@ -1,6 +1,5 @@
 # ===========================================================
-# employee/urls.py ✅ Final — Admin + Manager + Employee Profiles Ready
-# Employee Performance Tracking System (EPTS)
+# employee/urls.py
 # ===========================================================
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
@@ -10,16 +9,16 @@ from .views import (
     EmployeeCSVUploadView,
     AdminProfileView,
     ManagerProfileView,
-    EmployeeProfileView,  # ✅ NEW
+    EmployeeProfileView,
 )
 
 # -----------------------------------------------------------
-# 🌐 App Namespace
+# App Namespace
 # -----------------------------------------------------------
 app_name = "employee"
 
 # -----------------------------------------------------------
-# 📘 ROUTE SUMMARY
+# ROUTE SUMMARY
 # -----------------------------------------------------------
 """
 Auto-registers all CRUD API endpoints for:
@@ -43,23 +42,23 @@ Custom routes within ViewSets may include:
 """
 
 # -----------------------------------------------------------
-# 🚀 DRF Router Configuration
+# DRF Router Configuration
 # -----------------------------------------------------------
 router = DefaultRouter()
 router.register(r"departments", DepartmentViewSet, basename="departments")
 router.register(r"employees", EmployeeViewSet, basename="employees")
 
 # -----------------------------------------------------------
-# 🛠️ URL Patterns
+# URL Patterns
 # -----------------------------------------------------------
 urlpatterns = [
-    # 🔹 Auto-generated CRUD Endpoints
+    # Auto-generated CRUD Endpoints
     path("", include(router.urls)),
 
-    # 🔹 Bulk Employee CSV Upload
+    # Bulk Employee CSV Upload
     path("upload_csv/", EmployeeCSVUploadView.as_view(), name="employee_csv_upload"),
 
-    # 🔹 Profile APIs (role-based)
+    # Profile APIs (role-based)
     path("admin/profile/", AdminProfileView.as_view(), name="admin_profile"),
     path("manager/profile/", ManagerProfileView.as_view(), name="manager_profile"),
     path("profile/", EmployeeProfileView.as_view(), name="employee_profile"),  # ✅ NEW

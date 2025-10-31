@@ -1,5 +1,5 @@
 # ===============================================
-# reports/apps.py (Final Verified Version)
+# reports/apps.py 
 # ===============================================
 # App configuration for the Reports module.
 # Handles registration and initialization.

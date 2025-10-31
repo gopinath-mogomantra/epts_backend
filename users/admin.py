@@ -1,5 +1,5 @@
 # ===============================================
-# users/admin.py (Final Verified — Frontend & Admin Dashboard Aligned)
+# users/admin.py
 # ===============================================
 # Django Admin configuration for the custom User model.
 # Features:
@@ -23,7 +23,7 @@ class UserAdmin(BaseUserAdmin):
     """Custom Django admin configuration for the User model."""
 
     # ------------------------------------------------------
-    # 🔹 List Display Configuration
+    # List Display Configuration
     # ------------------------------------------------------
     list_display = (
         "emp_id",
@@ -42,7 +42,7 @@ class UserAdmin(BaseUserAdmin):
     )
 
     # ------------------------------------------------------
-    # 🔹 Filters (Sidebar)
+    # Filters (Sidebar)
     # ------------------------------------------------------
     list_filter = (
         "role",
@@ -55,7 +55,7 @@ class UserAdmin(BaseUserAdmin):
     )
 
     # ------------------------------------------------------
-    # 🔹 Searchable Fields
+    # Searchable Fields
     # ------------------------------------------------------
     search_fields = (
         "emp_id",
@@ -68,7 +68,7 @@ class UserAdmin(BaseUserAdmin):
     )
 
     # ------------------------------------------------------
-    # 🔹 Display Settings
+    # Display Settings
     # ------------------------------------------------------
     ordering = ("emp_id",)
     list_per_page = 25
@@ -83,7 +83,7 @@ class UserAdmin(BaseUserAdmin):
     )
 
     # ------------------------------------------------------
-    # 🔹 Fieldsets (Detail Page Layout)
+    # Fieldsets (Detail Page Layout)
     # ------------------------------------------------------
     fieldsets = (
         (_("Login Info"), {"fields": ("username", "email", "password")}),
@@ -132,7 +132,7 @@ class UserAdmin(BaseUserAdmin):
     )
 
     # ------------------------------------------------------
-    # 🔹 Add User Page Configuration
+    # Add User Page Configuration
     # ------------------------------------------------------
     add_fieldsets = (
         (
@@ -156,7 +156,7 @@ class UserAdmin(BaseUserAdmin):
     )
 
     # ------------------------------------------------------
-    # 🔹 Custom Display Helpers
+    # Custom Display Helpers
     # ------------------------------------------------------
     def get_full_name(self, obj):
         """Return user's full name or fallback to username."""
@@ -191,7 +191,7 @@ class UserAdmin(BaseUserAdmin):
     lock_expiry_time.short_description = "Lock Expiry"
 
     # ------------------------------------------------------
-    # 🔹 Query Optimization
+    # Query Optimization
     # ------------------------------------------------------
     def get_queryset(self, request):
         """Optimize query with department joins."""
@@ -199,7 +199,7 @@ class UserAdmin(BaseUserAdmin):
         return qs.select_related("department")
 
     # ------------------------------------------------------
-    # 🔹 Admin Actions
+    # Admin Actions
     # ------------------------------------------------------
     actions = ["unlock_selected_accounts"]
 
@@ -214,7 +214,7 @@ class UserAdmin(BaseUserAdmin):
         if unlocked:
             self.message_user(
                 request,
-                f"✅ {unlocked} account(s) successfully unlocked.",
+                f"{unlocked} account(s) successfully unlocked.",
                 level=messages.SUCCESS,
             )
         else:
@@ -224,4 +224,4 @@ class UserAdmin(BaseUserAdmin):
                 level=messages.WARNING,
             )
 
-    unlock_selected_accounts.short_description = "🔓 Unlock selected user accounts"
+    unlock_selected_accounts.short_description = "Unlock selected user accounts"

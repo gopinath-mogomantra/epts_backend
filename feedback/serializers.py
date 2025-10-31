@@ -1,5 +1,5 @@
 # ===========================================================
-# feedback/serializers.py (Final — Frontend + Business Logic Aligned)
+# feedback/serializers.py
 # ===========================================================
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
@@ -10,7 +10,7 @@ User = get_user_model()
 
 
 # ===========================================================
-# ✅ Simple User Serializer (Reusable)
+# Simple User Serializer (Reusable)
 # ===========================================================
 class SimpleUserSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField(read_only=True)
@@ -24,7 +24,7 @@ class SimpleUserSerializer(serializers.ModelSerializer):
 
 
 # ===========================================================
-# ✅ Base Feedback Serializer (Shared Logic)
+# Base Feedback Serializer (Shared Logic)
 # ===========================================================
 class BaseFeedbackSerializer(serializers.ModelSerializer):
     """
@@ -47,7 +47,7 @@ class BaseFeedbackSerializer(serializers.ModelSerializer):
     rating_display = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
-        model = None  # overridden in subclasses
+        model = None 
         fields = [
             "id",
             "employee",
@@ -139,7 +139,7 @@ class BaseFeedbackSerializer(serializers.ModelSerializer):
 
 
 # ===========================================================
-# ✅ General Feedback Serializer
+# General Feedback Serializer
 # ===========================================================
 class GeneralFeedbackSerializer(BaseFeedbackSerializer):
     """General feedback from Admins or HR."""
@@ -149,7 +149,7 @@ class GeneralFeedbackSerializer(BaseFeedbackSerializer):
 
 
 # ===========================================================
-# ✅ Manager Feedback Serializer
+# Manager Feedback Serializer
 # ===========================================================
 class ManagerFeedbackSerializer(BaseFeedbackSerializer):
     """Manager feedback for employees."""
@@ -187,7 +187,7 @@ class ManagerFeedbackSerializer(BaseFeedbackSerializer):
 
 
 # ===========================================================
-# ✅ Client Feedback Serializer
+# Client Feedback Serializer
 # ===========================================================
 class ClientFeedbackSerializer(BaseFeedbackSerializer):
     """Feedback from clients on employees or projects."""

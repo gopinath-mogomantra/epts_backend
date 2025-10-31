@@ -1,5 +1,5 @@
 # ===============================================
-# notifications/urls.py (Final — API & Frontend Ready)
+# notifications/urls.py 
 # ===============================================
 
 from django.urls import path
@@ -32,32 +32,32 @@ Available Endpoints:
 
 urlpatterns = [
     # ----------------------------------------------------
-    # 1️⃣ List all notifications (Unread/Read/All)
+    # List all notifications (Unread/Read/All)
     # ----------------------------------------------------
     path("", NotificationListView.as_view(), name="notifications-list"),
 
     # ----------------------------------------------------
-    # 2️⃣ Get unread count (for bell icon)
+    # Get unread count (for bell icon)
     # ----------------------------------------------------
     path("unread-count/", UnreadCountView.as_view(), name="notifications-unread-count"),
 
     # ----------------------------------------------------
-    # 3️⃣ Mark single notification as read
+    # Mark single notification as read
     # ----------------------------------------------------
     path("<int:pk>/mark-read/", MarkNotificationReadView.as_view(), name="notifications-mark-read"),
 
     # ----------------------------------------------------
-    # 4️⃣ Mark single notification as unread (revert)
+    # Mark single notification as unread (revert)
     # ----------------------------------------------------
     path("<int:pk>/mark-unread/", MarkNotificationUnreadView.as_view(), name="notifications-mark-unread"),
 
     # ----------------------------------------------------
-    # 5️⃣ Mark all notifications as read
+    # Mark all notifications as read
     # ----------------------------------------------------
     path("mark-all-read/", MarkAllNotificationsReadView.as_view(), name="notifications-mark-all-read"),
 
     # ----------------------------------------------------
-    # 6️⃣ Delete a single notification
+    # 6Delete a single notification
     # ----------------------------------------------------
     path("<int:pk>/delete/", NotificationDeleteView.as_view(), name="notifications-delete"),
 ]

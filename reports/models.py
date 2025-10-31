@@ -1,5 +1,5 @@
 # ===========================================================
-# reports/models.py (Final — Frontend + Business Logic Aligned)
+# reports/models.py 
 # ===========================================================
 from django.db import models
 from django.conf import settings
@@ -22,7 +22,7 @@ class CachedReport(models.Model):
     ]
 
     # -----------------------------------------------------------
-    # 🔹 Identification Fields
+    # Identification Fields
     # -----------------------------------------------------------
     report_type = models.CharField(
         max_length=20,
@@ -42,7 +42,7 @@ class CachedReport(models.Model):
     )
 
     # -----------------------------------------------------------
-    # 🔹 Relationships
+    # Relationships
     # -----------------------------------------------------------
     manager = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -62,7 +62,7 @@ class CachedReport(models.Model):
     )
 
     # -----------------------------------------------------------
-    # 🔹 Cached Payload
+    # Cached Payload
     # -----------------------------------------------------------
     payload = models.JSONField(
         help_text="Cached JSON data (aggregated summary, KPIs, and metrics)."
@@ -74,7 +74,7 @@ class CachedReport(models.Model):
     )
 
     # -----------------------------------------------------------
-    # 🔹 Metadata
+    # Metadata
     # -----------------------------------------------------------
     generated_at = models.DateTimeField(default=timezone.now)
     generated_by = models.ForeignKey(
@@ -94,7 +94,7 @@ class CachedReport(models.Model):
     is_active = models.BooleanField(default=True, help_text="Active or archived flag.")
 
     # -----------------------------------------------------------
-    # ⚙️ Meta Configuration
+    # Meta Configuration
     # -----------------------------------------------------------
     class Meta:
         ordering = ["-generated_at"]
@@ -114,7 +114,7 @@ class CachedReport(models.Model):
         ]
 
     # -----------------------------------------------------------
-    # 🔍 Validation
+    # Validation
     # -----------------------------------------------------------
     def clean(self):
         """Ensure correct period fields based on report type."""
@@ -124,7 +124,7 @@ class CachedReport(models.Model):
             raise ValidationError("Month is required for monthly reports.")
 
     # -----------------------------------------------------------
-    # 💾 Save Override
+    # Save Override
     # -----------------------------------------------------------
     def save(self, *args, **kwargs):
         """Validate, timestamp, and auto-generate report name before saving."""
@@ -146,7 +146,7 @@ class CachedReport(models.Model):
         super().save(*args, **kwargs)
 
     # -----------------------------------------------------------
-    # 🧩 Helpers
+    # Helpers
     # -----------------------------------------------------------
     def generate_filename(self, extension="csv"):
         """Return clean, unique filename for exports."""
@@ -207,11 +207,11 @@ class CachedReport(models.Model):
 
     def __str__(self):
         if self.report_type == "weekly" and self.week_number:
-            return f"📅 Weekly Report — Week {self.week_number}, {self.year}"
+            return f"Weekly Report — Week {self.week_number}, {self.year}"
         elif self.report_type == "monthly" and self.month:
-            return f"📊 Monthly Report — Month {self.month}, {self.year}"
+            return f"Monthly Report — Month {self.month}, {self.year}"
         elif self.report_type == "manager" and self.manager:
-            return f"👨‍💼 Manager Report — {self.manager.get_full_name()} ({self.get_period_display()})"
+            return f"Manager Report — {self.manager.get_full_name()} ({self.get_period_display()})"
         elif self.report_type == "department" and self.department:
-            return f"🏢 Department Report — {self.department.name} ({self.get_period_display()})"
+            return f"Department Report — {self.department.name} ({self.get_period_display()})"
         return f"{self.report_type.title()} Report ({self.year})"

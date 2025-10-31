@@ -1,5 +1,5 @@
 # ===========================================================
-# feedback/models.py (Final — Frontend + Business Logic Aligned)
+# feedback/models.py
 # ===========================================================
 from django.db import models
 from django.conf import settings
@@ -16,7 +16,7 @@ RATING_MAX = 10
 
 
 # ===========================================================
-# ✅ Abstract Base Class — Common for All Feedback Types
+# Abstract Base Class — Common for All Feedback Types
 # ===========================================================
 class BaseFeedback(models.Model):
     """
@@ -121,7 +121,7 @@ class BaseFeedback(models.Model):
                 Notification.objects.create(
                     employee=self.employee.user,
                     message=(
-                        f"📢 New {self.source_type} feedback received on "
+                        f"New {self.source_type} feedback received on "
                         f"{self.feedback_date.strftime('%d %b %Y')} "
                         f"(Rating: {self.rating}/10)."
                     ),
@@ -155,7 +155,7 @@ class BaseFeedback(models.Model):
 
 
 # ===========================================================
-# ✅ Feedback Variants
+# Feedback Variants
 # ===========================================================
 class GeneralFeedback(BaseFeedback):
     """General feedback from Admins or HR (non-managerial)."""

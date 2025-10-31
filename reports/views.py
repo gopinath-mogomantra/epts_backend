@@ -1,5 +1,5 @@
 # ===============================================
-# reports/views.py (Final — Notification Integrated & Production Ready)
+# reports/views.py
 # ===============================================
 # Handles:
 # - Weekly Consolidated Report
@@ -41,13 +41,13 @@ from .serializers import (
 )
 
 from reports.utils.pdf_generator import generate_employee_performance_pdf
-from notifications.views import create_report_notification  # ✅ notification trigger
+from notifications.views import create_report_notification 
 
 logger = logging.getLogger(__name__)
 
 
 # ===========================================================
-# 🧠 Helper: Compute Feedback Average
+# Helper: Compute Feedback Average
 # ===========================================================
 def get_feedback_average(employee, start_date=None, end_date=None):
     """Compute average rating across all feedback sources for a given employee."""
@@ -65,7 +65,7 @@ def get_feedback_average(employee, start_date=None, end_date=None):
 
 
 # ===========================================================
-# ✅ 1. WEEKLY CONSOLIDATED REPORT
+# 1. WEEKLY CONSOLIDATED REPORT
 # ===========================================================
 class WeeklyReportView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -125,7 +125,7 @@ class WeeklyReportView(APIView):
                     },
                 )
 
-            # 🔔 Create notification for weekly report generation
+            # Create notification for weekly report generation
             try:
                 message = f"Weekly performance report generated for Week {week}, {year}."
                 create_report_notification(
@@ -136,7 +136,7 @@ class WeeklyReportView(APIView):
                     department=None,
                 )
             except Exception as e:
-                logger.error(f"⚠️ Weekly report notification failed: {e}")
+                logger.error(f"Weekly report notification failed: {e}")
 
             return Response(
                 {
@@ -148,12 +148,12 @@ class WeeklyReportView(APIView):
             )
 
         except Exception as e:
-            logger.exception("❌ WeeklyReport Error: %s", str(e))
+            logger.exception("WeeklyReport Error: %s", str(e))
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 # ===========================================================
-# ✅ 2. MONTHLY CONSOLIDATED REPORT
+# 2. MONTHLY CONSOLIDATED REPORT
 # ===========================================================
 class MonthlyReportView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -215,7 +215,7 @@ class MonthlyReportView(APIView):
                     },
                 )
 
-            # 🔔 Create notification for monthly report generation
+            # Create notification for monthly report generation
             try:
                 message = f"Monthly performance report generated for {month}/{year}."
                 create_report_notification(
@@ -226,7 +226,7 @@ class MonthlyReportView(APIView):
                     department=None,
                 )
             except Exception as e:
-                logger.error(f"⚠️ Monthly report notification failed: {e}")
+                logger.error(f"Monthly report notification failed: {e}")
 
             return Response(
                 {
@@ -238,12 +238,12 @@ class MonthlyReportView(APIView):
             )
 
         except Exception as e:
-            logger.exception("❌ MonthlyReport Error: %s", str(e))
+            logger.exception("MonthlyReport Error: %s", str(e))
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 # ===========================================================
-# ✅ 3. DEPARTMENT-WISE WEEKLY REPORT (Final)
+# 3. DEPARTMENT-WISE WEEKLY REPORT (Final)
 # ===========================================================
 class DepartmentReportView(APIView):
     """Returns department-wise weekly performance report."""
@@ -298,12 +298,12 @@ class DepartmentReportView(APIView):
             )
 
         except Exception as e:
-            logger.exception(f"❌ DepartmentReport Error: {str(e)}")
+            logger.exception(f"DepartmentReport Error: {str(e)}")
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 # ===========================================================
-# ✅ 4. MANAGER REPORT (Placeholder)
+# 4. MANAGER REPORT (Placeholder)
 # ===========================================================
 class ManagerReportView(APIView):
     """Placeholder: Manager-wise weekly report."""
@@ -317,7 +317,7 @@ class ManagerReportView(APIView):
 
 
 # ===========================================================
-# ✅ 5. EXCEL EXPORT (Weekly + Monthly) — Final Version
+# 5. EXCEL EXPORT (Weekly + Monthly) — Final Version
 # ===========================================================
 class ExportWeeklyExcelView(APIView):
     """Exports weekly performance data to Excel."""
@@ -417,7 +417,7 @@ class ExportWeeklyExcelView(APIView):
             return response
 
         except Exception as e:
-            logger.exception("❌ ExportWeeklyExcel Error: %s", str(e))
+            logger.exception("ExportWeeklyExcel Error: %s", str(e))
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
@@ -517,13 +517,13 @@ class ExportMonthlyExcelView(APIView):
             return response
 
         except Exception as e:
-            logger.exception("❌ ExportMonthlyExcel Error: %s", str(e))
+            logger.exception("ExportMonthlyExcel Error: %s", str(e))
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 
 # ===========================================================
-# ✅ 6. PRINT PERFORMANCE REPORT (PDF Export) — Final Version
+# 6. PRINT PERFORMANCE REPORT (PDF Export)
 # ===========================================================
 class PrintPerformanceReportView(APIView):
     """
@@ -563,7 +563,7 @@ class PrintPerformanceReportView(APIView):
             # Generate the PDF using the utility
             pdf_response = generate_employee_performance_pdf(employee, evaluations, week=f"Week {week}, {year}")
 
-            # 🔔 Create a notification for this PDF export
+            # Create a notification for this PDF export
             try:
                 create_report_notification(
                     triggered_by=request.user,
@@ -573,18 +573,18 @@ class PrintPerformanceReportView(APIView):
                     department=employee.department,
                 )
             except Exception as e:
-                logger.warning(f"⚠️ PDF export notification failed: {e}")
+                logger.warning(f"PDF export notification failed: {e}")
 
-            logger.info(f"📄 PDF performance report generated for {emp_id}, Week {week}, {year}.")
+            logger.info(f"PDF performance report generated for {emp_id}, Week {week}, {year}.")
             return pdf_response
 
         except Exception as e:
-            logger.exception("❌ PrintPerformanceReport Error: %s", str(e))
+            logger.exception("PrintPerformanceReport Error: %s", str(e))
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 # ===========================================================
-# ✅ 7. CACHED REPORT MANAGEMENT (List, Archive, Restore)
+# 7. CACHED REPORT MANAGEMENT (List, Archive, Restore)
 # ===========================================================
 from rest_framework.generics import ListAPIView
 from django.shortcuts import get_object_or_404
@@ -610,7 +610,7 @@ class CachedReportArchiveView(APIView):
         report = get_object_or_404(CachedReport, pk=pk)
         report.is_archived = True
         report.save(update_fields=["is_archived"])
-        logger.info(f"📦 Cached report {report.id} archived by {request.user}.")
+        logger.info(f"Cached report {report.id} archived by {request.user}.")
         return Response(
             {"message": f"Report {report.id} archived successfully."},
             status=status.HTTP_200_OK,
@@ -625,7 +625,7 @@ class CachedReportRestoreView(APIView):
         report = get_object_or_404(CachedReport, pk=pk)
         report.is_archived = False
         report.save(update_fields=["is_archived"])
-        logger.info(f"♻️ Cached report {report.id} restored by {request.user}.")
+        logger.info(f"Cached report {report.id} restored by {request.user}.")
         return Response(
             {"message": f"Report {report.id} restored successfully."},
             status=status.HTTP_200_OK,

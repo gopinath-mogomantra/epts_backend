@@ -1,5 +1,5 @@
 # ===========================================================
-# performance/urls.py ✅ Correctly mapped
+# performance/urls.py
 # ===========================================================
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
@@ -9,7 +9,7 @@ from .views import (
     PerformanceSummaryView,
     EmployeeDashboardView,
     EmployeePerformanceView,
-    PerformanceDashboardView,  # ← Org-level
+    PerformanceDashboardView,
 )
 
 router = DefaultRouter()
@@ -21,10 +21,10 @@ urlpatterns = [
     # Admin/Manager summary
     path("summary/", PerformanceSummaryView.as_view(), name="performance_summary"),
 
-    # ✅ Organization-level dashboard (Admin / Manager)
+    # Organization-level dashboard (Admin / Manager)
     path("dashboard/organization/", PerformanceDashboardView.as_view(), name="performance_dashboard"),
 
-    # ✅ Employee self dashboard
+    # Employee self dashboard
     path("dashboard/", EmployeeDashboardView.as_view(), name="employee_dashboard"),
 
     # Individual employee by ID

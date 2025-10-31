@@ -1,6 +1,5 @@
 # ===========================================================
-# feedback/signals.py ✅ Final — Multi-Feedback Model Safe Logic
-# Employee Performance Tracking System (EPTS)
+# feedback/signals.py
 # ===========================================================
 
 from django.db.models.signals import post_save
@@ -21,7 +20,7 @@ def get_feedback_models():
         ClientFeedback = apps.get_model('feedback', 'ClientFeedback')
         return [GeneralFeedback, ManagerFeedback, ClientFeedback]
     except LookupError:
-        logger.warning("⚠️ Feedback models not ready — skipping signal registration.")
+        logger.warning("Feedback models not ready — skipping signal registration.")
         return []
 
 
@@ -51,7 +50,7 @@ def feedback_created_handler(sender, instance, created, **kwargs):
 
         # Example logging (replace with actual notification/score logic)
         logger.info(
-            f"✅ New {source} feedback created for employee: {emp_name or 'Unknown'} "
+            f"New {source} feedback created for employee: {emp_name or 'Unknown'} "
             f"(Rating: {rating}/10)"
         )
 
@@ -61,8 +60,8 @@ def feedback_created_handler(sender, instance, created, **kwargs):
             if emp and hasattr(emp, "user"):
                 Notification.objects.create(
                     employee=emp.user,
-                    message=f"📢 New {source} feedback added — Rating: {rating}/10",
+                    message=f"New {source} feedback added — Rating: {rating}/10",
                     auto_delete=True,
                 )
         except Exception as e:
-            logger.warning(f"⚠️ Notification dispatch failed: {e}")
+            logger.warning(f"Notification dispatch failed: {e}")

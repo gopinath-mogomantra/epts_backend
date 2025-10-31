@@ -1,5 +1,5 @@
 # ===============================================
-# reports/admin.py (Final Verified — Admin & Frontend Ready)
+# reports/admin.py
 # ===============================================
 # Django Admin configuration for Cached Reports.
 # Features:
@@ -20,7 +20,7 @@ class CachedReportAdmin(admin.ModelAdmin):
     """Admin configuration for Cached Report model."""
 
     # ------------------------------------------------------
-    # 🔹 Columns in List View
+    # Columns in List View
     # ------------------------------------------------------
     list_display = (
         "id",
@@ -115,7 +115,7 @@ class CachedReportAdmin(admin.ModelAdmin):
     get_period_display.short_description = "Period"
 
     # ------------------------------------------------------
-    # 🔒 Permission Overrides (Security)
+    # Permission Overrides (Security)
     # ------------------------------------------------------
     def has_add_permission(self, request):
         """Disable manual addition — only system/Cron jobs can create reports."""

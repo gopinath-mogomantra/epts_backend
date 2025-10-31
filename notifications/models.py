@@ -1,5 +1,5 @@
 # ===========================================================
-# notifications/models.py  ✅ Final Production-Ready Version
+# notifications/models.py 
 # ===========================================================
 from django.db import models
 from django.conf import settings
@@ -19,7 +19,7 @@ class Notification(models.Model):
     """
 
     # =======================================================
-    # 🔹 Core Fields
+    # Core Fields
     # =======================================================
     employee = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -70,7 +70,7 @@ class Notification(models.Model):
     )
 
     # =======================================================
-    # 🔹 Optional Departmental Broadcast (Future Scope)
+    # Optional Departmental Broadcast
     # =======================================================
     department = models.ForeignKey(
         "employee.Department",
@@ -82,7 +82,7 @@ class Notification(models.Model):
     )
 
     # =======================================================
-    # 🔹 Meta & Indexing
+    # Meta & Indexing
     # =======================================================
     class Meta:
         ordering = ["-created_at"]
@@ -94,14 +94,14 @@ class Notification(models.Model):
         ]
 
     # =======================================================
-    # 🔹 Utility Methods
+    # Utility Methods
     # =======================================================
     def mark_as_read(self, auto_commit=True):
         """
         Marks this notification as read and handles auto-deletion.
         """
         if self.is_read:
-            logger.debug(f"🔁 Notification already read: {self}")
+            logger.debug(f"Notification already read: {self}")
             return
 
         self.is_read = True
@@ -109,10 +109,10 @@ class Notification(models.Model):
 
         if auto_commit:
             self.save(update_fields=["is_read", "read_at"])
-            logger.info(f"📬 Notification marked as read for {self.employee} at {self.read_at}")
+            logger.info(f"Notification marked as read for {self.employee} at {self.read_at}")
 
         if self.auto_delete:
-            logger.info(f"🗑️ Auto-deleting read notification for {self.employee}: {self.message[:50]}")
+            logger.info(f"Auto-deleting read notification for {self.employee}: {self.message[:50]}")
             self.delete()
 
     def mark_as_unread(self, auto_commit=True):
@@ -123,15 +123,15 @@ class Notification(models.Model):
         self.read_at = None
         if auto_commit:
             self.save(update_fields=["is_read", "read_at"])
-            logger.info(f"🔄 Notification reverted to unread for {self.employee}")
+            logger.info(f"Notification reverted to unread for {self.employee}")
 
     def soft_delete(self):
         """Marks notification for auto-cleanup (without deleting immediately)."""
         self.auto_delete = True
         self.save(update_fields=["auto_delete"])
-        logger.info(f"⚙️ Notification flagged for auto-delete: {self}")
+        logger.info(f"Notification flagged for auto-delete: {self}")
 
     def __str__(self):
         """Readable display name for admin and shell."""
-        status = "✅ Read" if self.is_read else "🕐 Unread"
+        status = "Read" if self.is_read else "🕐 Unread"
         return f"[{status}] {self.employee} — {self.message[:60]}"

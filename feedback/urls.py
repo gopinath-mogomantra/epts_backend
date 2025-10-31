@@ -1,5 +1,5 @@
 # ===============================================
-# feedback/urls.py (Final — Frontend + Swagger Verified)
+# feedback/urls.py 
 # ===============================================
 
 from django.urls import path, include
@@ -8,7 +8,7 @@ from .views import (
     GeneralFeedbackViewSet,
     ManagerFeedbackViewSet,
     ClientFeedbackViewSet,
-    MyFeedbackView,  # ✅ Employee dashboard (self feedback view)
+    MyFeedbackView,
 )
 
 app_name = "feedback"

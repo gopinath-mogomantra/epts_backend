@@ -5,7 +5,7 @@ from .models import GeneralFeedback, ManagerFeedback, ClientFeedback
 
 
 # ===========================================================
-# ✅ Base Feedback Admin (Common Functionality)
+# Base Feedback Admin (Common Functionality)
 # ===========================================================
 class BaseFeedbackAdmin(admin.ModelAdmin):
     """Base admin configuration reused by all feedback models."""
@@ -75,7 +75,7 @@ class BaseFeedbackAdmin(admin.ModelAdmin):
 
 
 # ===========================================================
-# ✅ General Feedback Admin
+# General Feedback Admin
 # ===========================================================
 @admin.register(GeneralFeedback)
 class GeneralFeedbackAdmin(BaseFeedbackAdmin):
@@ -84,7 +84,7 @@ class GeneralFeedbackAdmin(BaseFeedbackAdmin):
 
 
 # ===========================================================
-# ✅ Manager Feedback Admin
+# Manager Feedback Admin
 # ===========================================================
 @admin.register(ManagerFeedback)
 class ManagerFeedbackAdmin(BaseFeedbackAdmin):
@@ -101,7 +101,7 @@ class ManagerFeedbackAdmin(BaseFeedbackAdmin):
 
 
 # ===========================================================
-# ✅ Client Feedback Admin
+# Client Feedback Admin
 # ===========================================================
 @admin.register(ClientFeedback)
 class ClientFeedbackAdmin(BaseFeedbackAdmin):

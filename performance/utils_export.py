@@ -1,5 +1,5 @@
 # ===========================================================
-# performance/utils_export.py ✅ Excel + PDF Export Utilities
+# performance/utils_export.py
 # ===========================================================
 import io
 from openpyxl import Workbook
@@ -13,7 +13,7 @@ from django.utils import timezone
 
 
 # ===========================================================
-# ✅ Excel Export Utility
+# Excel Export Utility
 # ===========================================================
 def generate_excel_report(evaluations, filename="performance_report.xlsx"):
     wb = Workbook()
@@ -51,7 +51,7 @@ def generate_excel_report(evaluations, filename="performance_report.xlsx"):
 
 
 # ===========================================================
-# ✅ PDF Export Utility (Single Employee Report)
+# PDF Export Utility (Single Employee Report)
 # ===========================================================
 def generate_pdf_report(employee, evaluations):
     buffer = io.BytesIO()

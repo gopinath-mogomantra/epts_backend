@@ -1,5 +1,5 @@
 # ===============================================
-# performance/apps.py (Fixed — 2025-10-27)
+# performance/apps.py
 # ===============================================
 from django.apps import AppConfig
 
@@ -14,6 +14,6 @@ class PerformanceConfig(AppConfig):
         Avoid direct model imports at the top level!
         """
         try:
-            import performance.signals  # ✅ only if you have signals
+            import performance.signals 
         except ImportError:
             pass

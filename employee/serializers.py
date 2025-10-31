@@ -1,3 +1,6 @@
+# ===========================================================
+# employee/serializers.py
+# ===========================================================
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.db import transaction, models
@@ -10,7 +13,7 @@ User = get_user_model()
 
 
 # ===========================================================
-# ✅ DEPARTMENT SERIALIZER
+# DEPARTMENT SERIALIZER
 # ===========================================================
 class DepartmentSerializer(serializers.ModelSerializer):
     employee_count = serializers.SerializerMethodField(read_only=True)
@@ -52,7 +55,7 @@ class DepartmentSerializer(serializers.ModelSerializer):
 
 
 # ===========================================================
-# ✅ USER SUMMARY SERIALIZER
+# USER SUMMARY SERIALIZER
 # ===========================================================
 class UserSummarySerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField(read_only=True)
@@ -66,7 +69,7 @@ class UserSummarySerializer(serializers.ModelSerializer):
 
 
 # ===========================================================
-# ✅ EMPLOYEE SERIALIZER (Read-Only)
+# EMPLOYEE SERIALIZER (Read-Only)
 # ===========================================================
 class EmployeeSerializer(serializers.ModelSerializer):
     user = UserSummarySerializer(read_only=True)
@@ -105,7 +108,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
 
 
 # ===========================================================
-# ✅ EMPLOYEE CREATE / UPDATE SERIALIZER
+# EMPLOYEE CREATE / UPDATE SERIALIZER
 # ===========================================================
 class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(write_only=True)
@@ -187,7 +190,7 @@ class EmployeeCreateUpdateSerializer(serializers.ModelSerializer):
 
 
 # ===========================================================
-# ✅ COMMON IMAGE VALIDATION
+# COMMON IMAGE VALIDATION
 # ===========================================================
 def validate_image_file(value):
     if value:
@@ -200,7 +203,7 @@ def validate_image_file(value):
 
 
 # ===========================================================
-# ✅ ADMIN PROFILE SERIALIZER
+# ADMIN PROFILE SERIALIZER
 # ===========================================================
 class AdminProfileSerializer(serializers.ModelSerializer):
     emp_id = serializers.CharField(source="user.emp_id", read_only=True)
@@ -245,7 +248,7 @@ class AdminProfileSerializer(serializers.ModelSerializer):
 
 
 # ===========================================================
-# ✅ MANAGER PROFILE SERIALIZER
+# MANAGER PROFILE SERIALIZER
 # ===========================================================
 class ManagerProfileSerializer(serializers.ModelSerializer):
     emp_id = serializers.CharField(source="user.emp_id", read_only=True)
@@ -290,7 +293,7 @@ class ManagerProfileSerializer(serializers.ModelSerializer):
 
 
 # ===========================================================
-# ✅ EMPLOYEE PROFILE SERIALIZER
+# EMPLOYEE PROFILE SERIALIZER
 # ===========================================================
 class EmployeeProfileSerializer(serializers.ModelSerializer):
     emp_id = serializers.CharField(source="user.emp_id", read_only=True)
@@ -342,7 +345,7 @@ class EmployeeProfileSerializer(serializers.ModelSerializer):
 
 
 # ===========================================================
-# ✅ EMPLOYEE BULK CSV UPLOAD SERIALIZER
+# EMPLOYEE BULK CSV UPLOAD SERIALIZER
 # ===========================================================
 class EmployeeCSVUploadSerializer(serializers.Serializer):
     file = serializers.FileField()

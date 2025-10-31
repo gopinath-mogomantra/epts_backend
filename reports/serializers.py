@@ -9,7 +9,7 @@ from typing import Any, Dict
 
 
 # =====================================================
-# 🧩 MIXIN — Standardized Score Rounding
+# MIXIN — Standardized Score Rounding
 # =====================================================
 class ScoreMixin:
     """Provides consistent rounding for numeric scores."""
@@ -28,7 +28,7 @@ class ScoreMixin:
 
 
 # =====================================================
-# ✅ 1. BASIC EMPLOYEE SERIALIZER (Used Across Reports)
+# 1. BASIC EMPLOYEE SERIALIZER (Used Across Reports)
 # =====================================================
 class SimpleEmployeeSerializer(serializers.ModelSerializer, ScoreMixin):
     full_name = serializers.SerializerMethodField()
@@ -48,7 +48,7 @@ class SimpleEmployeeSerializer(serializers.ModelSerializer, ScoreMixin):
 
 
 # =====================================================
-# ✅ 2. WEEKLY REPORT SERIALIZER
+# 2. WEEKLY REPORT SERIALIZER
 # =====================================================
 class WeeklyReportSerializer(serializers.Serializer, ScoreMixin):
     """Represents a single week's consolidated employee performance."""
@@ -86,7 +86,7 @@ class WeeklyReportSerializer(serializers.Serializer, ScoreMixin):
 
 
 # =====================================================
-# ✅ 3. MONTHLY REPORT SERIALIZER
+# 3. MONTHLY REPORT SERIALIZER
 # =====================================================
 class MonthlyReportSerializer(serializers.Serializer, ScoreMixin):
     """Aggregated monthly performance and feedback summary."""
@@ -114,7 +114,7 @@ class MonthlyReportSerializer(serializers.Serializer, ScoreMixin):
 
 
 # =====================================================
-# ✅ 4. EMPLOYEE HISTORY SERIALIZER
+# 4. EMPLOYEE HISTORY SERIALIZER
 # =====================================================
 class EmployeeHistorySerializer(serializers.Serializer, ScoreMixin):
     """Weekly trend view for an employee’s performance timeline."""
@@ -133,7 +133,7 @@ class EmployeeHistorySerializer(serializers.Serializer, ScoreMixin):
 
 
 # =====================================================
-# ✅ 5. MANAGER-WISE REPORT SERIALIZER
+# 5. MANAGER-WISE REPORT SERIALIZER
 # =====================================================
 class ManagerReportSerializer(serializers.Serializer, ScoreMixin):
     """Weekly report for all employees under a specific manager."""
@@ -158,7 +158,7 @@ class ManagerReportSerializer(serializers.Serializer, ScoreMixin):
 
 
 # =====================================================
-# ✅ 6. DEPARTMENT-WISE REPORT SERIALIZER
+# 6. DEPARTMENT-WISE REPORT SERIALIZER
 # =====================================================
 class DepartmentReportSerializer(serializers.Serializer, ScoreMixin):
     """Weekly report across all employees in a department."""
@@ -183,7 +183,7 @@ class DepartmentReportSerializer(serializers.Serializer, ScoreMixin):
 
 
 # =====================================================
-# ✅ 7. CACHED REPORT SERIALIZER (DB MODEL)
+# 7. CACHED REPORT SERIALIZER (DB MODEL)
 # =====================================================
 class CachedReportSerializer(serializers.ModelSerializer):
     """Handles serialization of precomputed/cached reports."""
@@ -236,7 +236,7 @@ class CachedReportSerializer(serializers.ModelSerializer):
 
 
 # =====================================================
-# ✅ 8. COMBINED / AGGREGATED REPORT SERIALIZER
+# 8. COMBINED / AGGREGATED REPORT SERIALIZER
 # =====================================================
 class CombinedReportSerializer(serializers.Serializer, ScoreMixin):
     """

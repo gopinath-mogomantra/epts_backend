@@ -1,5 +1,5 @@
 # ===============================================
-# notifications/apps.py (Final Verified Version)
+# notifications/apps.py
 # ===============================================
 # App configuration for the Notifications module.
 # Handles registration and automatic signal loading.
@@ -20,6 +20,6 @@ class NotificationsConfig(AppConfig):
         This ensures automatic trigger setup on startup.
         """
         try:
-            import notifications.signals  # noqa: F401
+            import notifications.signals
         except Exception:
             pass

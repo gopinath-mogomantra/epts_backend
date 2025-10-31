@@ -1,6 +1,5 @@
 # ===========================================================
-# users/views.py ✅ Final Enhanced & Cleaned (Auto Employee Sync)
-# Employee Performance Tracking System (EPTS)
+# users/views.py
 # ===========================================================
 
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
@@ -35,7 +34,7 @@ User = get_user_model()
 
 
 # ===========================================================
-# 🔹 HELPER PERMISSION FUNCTIONS
+# HELPER PERMISSION FUNCTIONS
 # ===========================================================
 def is_admin(user):
     return user.is_superuser or getattr(user, "role", "") == "Admin"
@@ -48,7 +47,7 @@ def is_admin_or_manager(user):
 
 
 # ===========================================================
-# ✅ 1. LOGIN
+# 1. LOGIN
 # ===========================================================
 class ObtainTokenPairView(TokenObtainPairView):
     """POST /api/users/login/ — Login via emp_id, username, or email."""
@@ -60,7 +59,7 @@ class ObtainTokenPairView(TokenObtainPairView):
         try:
             serializer.is_valid(raise_exception=True)
         except Exception as e:
-            logger.warning(f"⚠️ Login failed: {e}")
+            logger.warning(f"Login failed: {e}")
             return Response({"detail": str(e), "status": "failed"}, status=400)
 
         return Response(
@@ -76,14 +75,14 @@ class ObtainTokenPairView(TokenObtainPairView):
 
 
 # ===========================================================
-# ✅ 2. REFRESH TOKEN
+# 2. REFRESH TOKEN
 # ===========================================================
 class RefreshTokenView(TokenRefreshView):
     permission_classes = [AllowAny]
 
 
 # ===========================================================
-# ✅ 3. REGISTER USER (Admin / Manager)
+# 3. REGISTER USER (Admin / Manager)
 # ===========================================================
 class RegisterView(generics.CreateAPIView):
     """POST /api/users/register/"""
@@ -105,7 +104,7 @@ class RegisterView(generics.CreateAPIView):
         if User.objects.filter(email__iexact=email).exists():
             return Response({"error": "Email already exists."}, status=400)
 
-        # ✅ Create User (serializer handles this safely)
+        # Create User (serializer handles this safely)
         user = serializer.save()
 
         # Auto-fill joining_date if missing
@@ -114,7 +113,7 @@ class RegisterView(generics.CreateAPIView):
             user.save(update_fields=["joining_date"])
 
         # -----------------------------------------------------------
-        # ✅ Employee Auto-Sync (Safe get_or_create)
+        # Employee Auto-Sync (Safe get_or_create)
         # -----------------------------------------------------------
         emp_defaults = {
             "department": user.department,
@@ -145,7 +144,7 @@ class RegisterView(generics.CreateAPIView):
             employee_obj.save(update_fields=["is_deleted", "status", "department", "role", "manager", "joining_date"])
 
         # -----------------------------------------------------------
-        # ✅ Send Email Notification (optional)
+        # Send Email Notification (optional)
         # -----------------------------------------------------------
         try:
             send_mail(
@@ -165,11 +164,11 @@ class RegisterView(generics.CreateAPIView):
         except Exception as e:
             logger.warning(f"Email send failed for {user.emp_id}: {e}")
 
-        logger.info(f"✅ User {user.emp_id} registered by {current_user.emp_id}")
+        logger.info(f"User {user.emp_id} registered by {current_user.emp_id}")
 
         return Response(
             {
-                "message": "✅ User registered successfully.",
+                "message": "User registered successfully.",
                 "user": ProfileSerializer(user).data,
                 "temp_password": getattr(user, "temp_password", None) if settings.DEBUG else None,
             },
@@ -178,7 +177,7 @@ class RegisterView(generics.CreateAPIView):
 
 
 # ===========================================================
-# ✅ 4. CHANGE PASSWORD
+# 4. CHANGE PASSWORD
 # ===========================================================
 class ChangePasswordView(APIView):
     """
@@ -193,31 +192,31 @@ class ChangePasswordView(APIView):
         new_password = request.data.get('new_password')
         confirm_password = request.data.get('confirm_password')
 
-        # 1️⃣ Check all fields are provided
+        # Check all fields are provided
         if not old_password or not new_password or not confirm_password:
             return Response({
                 "message": "All fields (old_password, new_password, confirm_password) are required.",
                 "status": "error"
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # 2️⃣ Validate old password
+        # Validate old password
         if not user.check_password(old_password):
             return Response({
-                "message": "❌ Old password is incorrect.",
+                "message": "Old password is incorrect.",
                 "status": "error"
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # 3️⃣ Ensure new password is different from old
+        # Ensure new password is different from old
         if old_password == new_password:
             return Response({
-                "message": "⚠️ New password cannot be the same as the old password.",
+                "message": "New password cannot be the same as the old password.",
                 "status": "error"
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # 4️⃣ Ensure new_password == confirm_password
+        # Ensure new_password == confirm_password
         if new_password != confirm_password:
             return Response({
-                "message": "❌ New password and confirm password do not match.",
+                "message": "New password and confirm password do not match.",
                 "status": "error"
             }, status=status.HTTP_400_BAD_REQUEST)
 
@@ -225,21 +224,21 @@ class ChangePasswordView(APIView):
         pattern = r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*#?&])[A-Za-z\d@$!%*#?&]{8,}$'
         if not re.match(pattern, new_password):
             return Response({
-                "message": "🔒 Password must be at least 8 characters long and include uppercase, lowercase, number, and special character.",
+                "message": "Password must be at least 8 characters long and include uppercase, lowercase, number, and special character.",
                 "status": "error"
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # 6️⃣ All checks passed – update password
+        # All checks passed – update password
         user.set_password(new_password)
         user.save()
 
         return Response({
-            "message": "✅ Password changed successfully!",
+            "message": "Password changed successfully!",
             "status": "success"
         }, status=status.HTTP_200_OK)
 
 # ===========================================================
-# ✅ 5. PROFILE (GET / PATCH)
+# 5. PROFILE (GET / PATCH)
 # ===========================================================
 class ProfileView(APIView):
     permission_classes = [IsAuthenticated]
@@ -273,13 +272,13 @@ class ProfileView(APIView):
         logger.info(f"👤 Profile updated by {user.emp_id}")
 
         return Response(
-            {"message": "✅ Profile updated successfully.", "user": ProfileSerializer(user).data},
+            {"message": "Profile updated successfully.", "user": ProfileSerializer(user).data},
             status=200,
         )
 
 
 # ===========================================================
-# ✅ 6. ROLE LIST
+# 6. ROLE LIST
 # ===========================================================
 class RoleListView(APIView):
     permission_classes = [AllowAny]
@@ -289,7 +288,7 @@ class RoleListView(APIView):
 
 
 # ===========================================================
-# ✅ 7. USER LIST (Admin Only)
+# 7. USER LIST (Admin Only)
 # ===========================================================
 class UserPagination(PageNumberPagination):
     page_size = 20
@@ -322,7 +321,7 @@ class UserListView(generics.ListAPIView):
 
 
 # ===========================================================
-# ✅ 8. ADMIN RESET PASSWORD
+# 8. ADMIN RESET PASSWORD
 # ===========================================================
 @api_view(["POST"])
 @permission_classes([IsAdminUser])
@@ -359,14 +358,14 @@ def reset_password(request):
         logger.warning(f"Email send failed for {user.emp_id}: {e}")
 
     logger.info(f"🔄 Password reset by Admin {request.user.emp_id} for user {user.emp_id}")
-    data = {"message": f"✅ Password reset successfully for {user.emp_id}.", "force_password_change": True}
+    data = {"message": f"Password reset successfully for {user.emp_id}.", "force_password_change": True}
     if settings.DEBUG:
         data["temp_password"] = new_password
     return Response(data, status=200)
 
 
 # ===========================================================
-# ✅ 9. USER DETAIL (Admin CRUD)
+# 9. USER DETAIL (Admin CRUD)
 # ===========================================================
 class UserDetailView(APIView):
     permission_classes = [IsAuthenticated]
@@ -405,7 +404,7 @@ class UserDetailView(APIView):
             setattr(user, f, v)
         user.save(update_fields=list(updates.keys()))
 
-        # ✅ Reflect updates in Employee table
+        # Reflect updates in Employee table
         Employee.objects.filter(user=user).update(
             department=user.department,
             manager=user.manager,
@@ -413,7 +412,7 @@ class UserDetailView(APIView):
         )
 
         logger.info(f"🛠 User {emp_id} updated by Admin {admin.emp_id}")
-        return Response({"message": "✅ User updated successfully.", "user": ProfileSerializer(user).data}, status=200)
+        return Response({"message": "User updated successfully.", "user": ProfileSerializer(user).data}, status=200)
 
     @transaction.atomic
     def delete(self, request, emp_id):
@@ -433,13 +432,13 @@ class UserDetailView(APIView):
         user.save(update_fields=["is_active"])
         Employee.objects.filter(user=user).update(status="Inactive")
 
-        logger.warning(f"🚫 User {emp_id} deactivated by Admin {admin.emp_id}")
-        return Response({"message": f"✅ User '{emp_id}' deactivated successfully."}, status=200)
+        logger.warning(f"User {emp_id} deactivated by Admin {admin.emp_id}")
+        return Response({"message": f"User '{emp_id}' deactivated successfully."}, status=200)
 
 
 
 # ===========================================================
-# ✅ 10. ADMIN — REGENERATE PASSWORD (Console or Email)
+# 10. ADMIN — REGENERATE PASSWORD (Console or Email)
 # ===========================================================
 @api_view(["POST"])
 @permission_classes([IsAdminUser])
@@ -477,7 +476,7 @@ def regenerate_password(request):
     if not user.is_active:
         return Response({"error": "Cannot regenerate password for inactive user."}, status=400)
 
-    # ✅ Generate a new secure temporary password
+    # Generate a new secure temporary password
     first_name = user.first_name or "User"
     random_part = get_random_string(length=4, allowed_chars="ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
     new_password = f"{first_name}@{random_part}"
@@ -486,10 +485,10 @@ def regenerate_password(request):
     user.force_password_change = True
     user.save(update_fields=["password", "force_password_change"])
 
-    # ✅ Log or send via email (console fallback)
+    # Log or send via email (console fallback)
     if hasattr(settings, "EMAIL_BACKEND") and "console" in settings.EMAIL_BACKEND:
         print("\n" + "=" * 50)
-        print(f"📩 TEMP PASSWORD GENERATED FOR: {user.emp_id}")
+        print(f"TEMP PASSWORD GENERATED FOR: {user.emp_id}")
         print(f"User: {user.get_full_name()} ({user.email})")
         print(f"Temporary Password: {new_password}")
         print(f"Generated by Admin: {request.user.emp_id}")
@@ -510,14 +509,14 @@ def regenerate_password(request):
                 fail_silently=True,
             )
         except Exception as e:
-            logger.warning(f"⚠️ Email send failed for {user.emp_id}: {e}")
+            logger.warning(f"Email send failed for {user.emp_id}: {e}")
 
-    logger.info(f"🔁 Temporary password regenerated for {user.emp_id} by Admin {request.user.emp_id}")
+    logger.info(f"Temporary password regenerated for {user.emp_id} by Admin {request.user.emp_id}")
 
     response_data = {
         "emp_id": user.emp_id,
         "email": user.email,
-        "message": f"✅ Temporary password regenerated successfully for {user.emp_id}.",
+        "message": f"Temporary password regenerated successfully for {user.emp_id}.",
         "temp_password": new_password if settings.DEBUG else "Hidden (Production)",
         "force_password_change": True,
     }
@@ -525,7 +524,7 @@ def regenerate_password(request):
 
 
 # ===========================================================
-# ✅ 11. ADMIN — LOGIN DETAILS LIST
+# 11. ADMIN — LOGIN DETAILS LIST
 # ===========================================================
 class AdminUserListView(generics.ListAPIView):
     """
@@ -541,6 +540,6 @@ class AdminUserListView(generics.ListAPIView):
     ordering_fields = ["emp_id", "role", "date_joined", "last_login"]
 
     def list(self, request, *args, **kwargs):
-        logger.info(f"📋 Admin {request.user.emp_id} viewed login details list.")
+        logger.info(f"Admin {request.user.emp_id} viewed login details list.")
         return super().list(request, *args, **kwargs)
 

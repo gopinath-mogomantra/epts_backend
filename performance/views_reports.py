@@ -1,5 +1,5 @@
 # ===========================================================
-# performance/views_reports.py ✅ Reports + Export Endpoints
+# performance/views_reports.py
 # ===========================================================
 from rest_framework import generics, status, permissions
 from rest_framework.response import Response
@@ -14,7 +14,7 @@ from .utils_export import generate_excel_report, generate_pdf_report
 
 
 # ===========================================================
-# ✅ Weekly / Department / Manager Report
+# Weekly / Department / Manager Report
 # ===========================================================
 class PerformanceReportView(generics.ListAPIView):
     serializer_class = PerformanceEvaluationSerializer
@@ -53,7 +53,7 @@ class PerformanceReportView(generics.ListAPIView):
 
 
 # ===========================================================
-# ✅ Excel Export (All or Filtered)
+# Excel Export (All or Filtered)
 # ===========================================================
 class PerformanceExcelExportView(generics.GenericAPIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -75,7 +75,7 @@ class PerformanceExcelExportView(generics.GenericAPIView):
     
 
 # ===========================================================
-# ✅ Individual PDF Report (Employee)
+# Individual PDF Report (Employee)
 # ===========================================================
 class EmployeePerformancePDFView(generics.GenericAPIView):
     permission_classes = [permissions.IsAuthenticated]

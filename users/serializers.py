@@ -1,6 +1,5 @@
 # ===========================================================
-# users/serializers.py ✅ Final Enhanced (Manager Sync + Validations)
-# Employee Performance Tracking System (EPTS)
+# users/serializers.py
 # ===========================================================
 
 from rest_framework import serializers
@@ -16,15 +15,14 @@ import string
 import logging
 import re
 from datetime import datetime, date
-
-from employee.models import Department, Employee  # Safe imports
+from employee.models import Department, Employee 
 
 User = get_user_model()
 logger = logging.getLogger("users")
 
 
 # ===========================================================
-# ✅ 1. LOGIN SERIALIZER (username / emp_id / email)
+# 1. LOGIN SERIALIZER (username / emp_id / email)
 # ===========================================================
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
@@ -123,7 +121,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 
 # ===========================================================
-# ✅ 2. REGISTER SERIALIZER (Signal-Free, Employee Sync)
+# 2. REGISTER SERIALIZER (Signal-Free, Employee Sync)
 # ===========================================================
 class RegisterSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField(read_only=True)
@@ -210,7 +208,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         if joining_date_value:
             joining_date = self.validate_joining_date(joining_date_value)
 
-        # ✅ Resolve Department
+        # Resolve Department
         if not dept_value:
             raise serializers.ValidationError({"department": "Department is required."})
         dept_value = str(dept_value).strip()
@@ -224,7 +222,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         if not getattr(department_instance, "is_active", True):
             raise serializers.ValidationError({"department": f"Department '{department_instance.name}' is inactive."})
 
-        # ✅ Resolve Manager (active, not deleted, valid role)
+        # Resolve Manager (active, not deleted, valid role)
         manager_employee = None
         if manager_value:
             manager_value = str(manager_value).strip()
@@ -258,17 +256,17 @@ class RegisterSerializer(serializers.ModelSerializer):
                     joining_date=getattr(manager_user, "joining_date", timezone.now().date()),
                 )
 
-        # ✅ Generate Emp ID
+        # Generate Emp ID
         last_user = User.objects.select_for_update().order_by("-id").first()
         last_num = int(last_user.emp_id.replace("EMP", "")) if last_user and last_user.emp_id else 0
         new_emp_id = f"EMP{last_num + 1:04d}"
 
-        # ✅ Temporary Password
+        # Temporary Password
         first_name = validated_data.get("first_name", "User").capitalize()
         random_part = "".join(random.choices(string.ascii_letters + string.digits, k=4))
         temp_password = f"{first_name}@{random_part}"
 
-        # ✅ Create User
+        # Create User
         user = User.objects.create_user(
             emp_id=new_emp_id,
             password=temp_password,
@@ -281,7 +279,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             user.joining_date = joining_date
         user.save()
 
-        # ✅ Create Employee
+        # Create Employee
         emp_kwargs = {
             "user": user,
             "department": department_instance,
@@ -292,7 +290,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         Employee.objects.create(**emp_kwargs)
 
         user.temp_password = temp_password
-        logger.info(f"✅ User {user.emp_id} created successfully with temp password.")
+        logger.info(f"User {user.emp_id} created successfully with temp password.")
         return user
 
     # ---------------- RESPONSE FORMAT ----------------
@@ -308,7 +306,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 
 # ===========================================================
-# ✅ 3. CHANGE PASSWORD SERIALIZER (Enhanced)
+# 3. CHANGE PASSWORD SERIALIZER (Enhanced)
 # ===========================================================
 class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(write_only=True, required=True)
@@ -344,12 +342,12 @@ class ChangePasswordSerializer(serializers.Serializer):
         user.set_password(self.validated_data["new_password"])
         user.force_password_change = False
         user.save(update_fields=["password", "force_password_change"])
-        logger.info(f"🔒 Password changed successfully for {user.emp_id}")
-        return {"message": "✅ Password changed successfully!"}
+        logger.info(f"Password changed successfully for {user.emp_id}")
+        return {"message": "Password changed successfully!"}
 
 
 # ===========================================================
-# ✅ 4. PROFILE SERIALIZER
+# 4. PROFILE SERIALIZER
 # ===========================================================
 class ProfileSerializer(serializers.ModelSerializer):
     department_name = serializers.CharField(source="department.name", read_only=True)
@@ -470,7 +468,7 @@ class RegeneratePasswordSerializer(serializers.Serializer):
             mail_sent = True
         except Exception as e:
             # log and fallback to console output so dev can copy the password
-            logger.warning(f"⚠️ Failed to send regenerated password email to {user.emp_id}: {e}")
+            logger.warning(f"Failed to send regenerated password email to {user.emp_id}: {e}")
             # Print to console when email backend not set / for local dev
             try:
                 print(f"[EPTS] Regenerated password for {user.emp_id}: {new_password}")
@@ -478,12 +476,12 @@ class RegeneratePasswordSerializer(serializers.Serializer):
                 # if printing fails, still continue
                 pass
 
-        logger.info(f"🔁 Temporary password regenerated for user {user.emp_id} by Admin.")
+        logger.info(f"Temporary password regenerated for user {user.emp_id} by Admin.")
 
         return {
             "emp_id": user.emp_id,
             "email": user.email,
-            "message": f"✅ Temporary password regenerated successfully for {user.emp_id}.",
+            "message": f"Temporary password regenerated successfully for {user.emp_id}.",
             # Only include actual temp password in response when debugging locally
             "temp_password": new_password if settings.DEBUG else "Hidden (Production)",
             "force_password_change": True,
@@ -492,7 +490,7 @@ class RegeneratePasswordSerializer(serializers.Serializer):
     
 
 # ===========================================================
-# ✅ 5. ADMIN LOGIN DETAILS SERIALIZER
+# 5. ADMIN LOGIN DETAILS SERIALIZER
 # ===========================================================
 class LoginDetailsSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()

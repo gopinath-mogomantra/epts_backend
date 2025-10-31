@@ -1,5 +1,5 @@
 # ===========================================================
-# performance/views.py (Final — with /api/performance/dashboard/ Added)
+# performance/views.py
 # ===========================================================
 from rest_framework import viewsets, permissions, status, filters
 from rest_framework.response import Response
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 # ===========================================================
-# ✅ PERFORMANCE VIEWSET (CRUD + FILTERS)
+# PERFORMANCE VIEWSET (CRUD + FILTERS)
 # ===========================================================
 class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
     """
@@ -60,7 +60,7 @@ class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
         return qs
 
     # --------------------------------------------------------
-    # ✅ CREATE — Auto Rank Trigger + Notification
+    # CREATE — Auto Rank Trigger + Notification
     # --------------------------------------------------------
     def create(self, request, *args, **kwargs):
         role = getattr(request.user, "role", "").lower()
@@ -100,7 +100,7 @@ class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
 
         return Response(
             {
-                "message": "✅ Performance evaluation recorded successfully.",
+                "message": "Performance evaluation recorded successfully.",
                 "data": {
                     "employee_name": f"{instance.employee.user.first_name} {instance.employee.user.last_name}".strip(),
                     "emp_id": instance.employee.user.emp_id,
@@ -116,7 +116,7 @@ class PerformanceEvaluationViewSet(viewsets.ModelViewSet):
 
 
 # ===========================================================
-# ✅ GET PERFORMANCE RECORDS BY EMPLOYEE ID
+# GET PERFORMANCE RECORDS BY EMPLOYEE ID
 # ===========================================================
 class EmployeePerformanceByIdView(APIView):
     """Return all performance evaluations for a specific employee."""
@@ -171,7 +171,7 @@ class EmployeePerformanceByIdView(APIView):
 
 
 # ===========================================================
-# ✅ PERFORMANCE SUMMARY (Admin / Manager Dashboard)
+# PERFORMANCE SUMMARY (Admin / Manager Dashboard)
 # ===========================================================
 class PerformanceSummaryView(APIView):
     """Weekly summary of departments and leaderboard."""
@@ -227,7 +227,7 @@ class PerformanceSummaryView(APIView):
 
 
 # ===========================================================
-# ✅ EMPLOYEE DASHBOARD (Self Performance Trend)
+# EMPLOYEE DASHBOARD (Self Performance Trend)
 # ===========================================================
 class EmployeeDashboardView(APIView):
     """Displays logged-in employee’s personal performance trend."""
@@ -267,7 +267,7 @@ class EmployeeDashboardView(APIView):
 
 
 # ===========================================================
-# ✅ ADMIN / MANAGER: VIEW SPECIFIC EMPLOYEE PERFORMANCE
+# ADMIN / MANAGER: VIEW SPECIFIC EMPLOYEE PERFORMANCE
 # ===========================================================
 class EmployeePerformanceView(APIView):
     """View all evaluations for a given employee."""
@@ -310,7 +310,7 @@ class EmployeePerformanceView(APIView):
 
 
 # ===========================================================
-# ✅ ORGANIZATION PERFORMANCE DASHBOARD (NEW)
+# ORGANIZATION PERFORMANCE DASHBOARD (NEW)
 # ===========================================================
 class PerformanceDashboardView(APIView):
     """

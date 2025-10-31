@@ -1,5 +1,5 @@
 # ===============================================
-# employee/admin.py (Final — Fixed & Frontend Ready)
+# employee/admin.py
 # ===============================================
 # Django Admin configuration for Employee and Department models.
 # Features:
@@ -14,7 +14,7 @@ from .models import Employee, Department
 
 
 # =====================================================
-# 🏢 DEPARTMENT ADMIN
+# DEPARTMENT ADMIN
 # =====================================================
 @admin.register(Department)
 class DepartmentAdmin(admin.ModelAdmin):
@@ -49,7 +49,7 @@ class DepartmentAdmin(admin.ModelAdmin):
 
 
 # =====================================================
-# 👨‍💼 EMPLOYEE ADMIN
+# EMPLOYEE ADMIN
 # =====================================================
 @admin.register(Employee)
 class EmployeeAdmin(admin.ModelAdmin):

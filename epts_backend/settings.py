@@ -1,5 +1,5 @@
 # ===========================================================
-# epts_backend/settings.py - Fixed & Production Ready
+# epts_backend/settings.py
 # ===========================================================
 
 import os

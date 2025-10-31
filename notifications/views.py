@@ -1,5 +1,5 @@
 # ===============================================
-# notifications/views.py (Final — Production Ready & Frontend-Aligned)
+# notifications/views.py 
 # ===============================================
 
 from rest_framework import generics, status
@@ -15,7 +15,7 @@ from .serializers import NotificationSerializer
 
 
 # ===============================================================
-# 🔹 Pagination (Frontend Friendly)
+# Pagination (Frontend Friendly)
 # ===============================================================
 class NotificationPagination(PageNumberPagination):
     page_size = 10
@@ -24,7 +24,7 @@ class NotificationPagination(PageNumberPagination):
 
 
 # ===============================================================
-# ✅ 1️⃣ Notification List View (All Roles)
+# Notification List View (All Roles)
 # ===============================================================
 class NotificationListView(generics.ListAPIView):
     """
@@ -77,7 +77,7 @@ class NotificationListView(generics.ListAPIView):
 
 
 # ===============================================================
-# ✅ 2️⃣ Unread Count View (Bell Icon Endpoint)
+# Unread Count View (Bell Icon Endpoint)
 # ===============================================================
 class UnreadCountView(generics.GenericAPIView):
     """Return the unread notification count for the logged-in user."""
@@ -89,7 +89,7 @@ class UnreadCountView(generics.GenericAPIView):
 
 
 # ===============================================================
-# ✅ 3️⃣ Mark Single Notification as Read
+# Mark Single Notification as Read
 # ===============================================================
 class MarkNotificationReadView(generics.GenericAPIView):
     """Marks a single notification as read, with optional auto-delete."""
@@ -105,17 +105,17 @@ class MarkNotificationReadView(generics.GenericAPIView):
 
         if notification.auto_delete:
             return Response(
-                {"message": "✅ Notification marked as read and auto-deleted.", "notification_id": pk},
+                {"message": "Notification marked as read and auto-deleted.", "notification_id": pk},
                 status=status.HTTP_200_OK,
             )
         return Response(
-            {"message": "✅ Notification marked as read.", "notification_id": pk},
+            {"message": "Notification marked as read.", "notification_id": pk},
             status=status.HTTP_200_OK,
         )
 
 
 # ===============================================================
-# ✅ 4️⃣ Mark Notification as Unread (Revert)
+# Mark Notification as Unread (Revert)
 # ===============================================================
 class MarkNotificationUnreadView(generics.GenericAPIView):
     """Reverts a persistent notification to unread."""
@@ -135,13 +135,13 @@ class MarkNotificationUnreadView(generics.GenericAPIView):
 
         notification.mark_as_unread()
         return Response(
-            {"message": "✅ Notification marked as unread.", "notification_id": pk},
+            {"message": "Notification marked as unread.", "notification_id": pk},
             status=status.HTTP_200_OK,
         )
 
 
 # ===============================================================
-# ✅ 5️⃣ Mark All Notifications as Read (Bulk)
+# Mark All Notifications as Read (Bulk)
 # ===============================================================
 class MarkAllNotificationsReadView(generics.GenericAPIView):
     """Marks all unread notifications for a user as read."""
@@ -167,7 +167,7 @@ class MarkAllNotificationsReadView(generics.GenericAPIView):
 
         return Response({
             "message": (
-                f"✅ Marked {persistent_updated_count} notifications as read and "
+                f"Marked {persistent_updated_count} notifications as read and "
                 f"auto-deleted {auto_deleted_count} temporary notifications."
             ),
             "total_processed": persistent_updated_count + auto_deleted_count,
@@ -175,7 +175,7 @@ class MarkAllNotificationsReadView(generics.GenericAPIView):
 
 
 # ===============================================================
-# ✅ 6️⃣ Delete Notification (Single)
+# Delete Notification (Single)
 # ===============================================================
 class NotificationDeleteView(generics.DestroyAPIView):
     """Delete a single notification manually (Admin or Owner)."""
@@ -191,12 +191,12 @@ class NotificationDeleteView(generics.DestroyAPIView):
             raise PermissionDenied("You are not authorized to delete this notification.")
 
         notification.delete()
-        return Response({"message": "🗑️ Notification deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
+        return Response({"message": "Notification deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
 
 
 
 # ===========================================================
-# 🧩 Inline Helper: Report Notification Generator
+# Inline Helper: Report Notification Generator
 # ===========================================================
 from django.utils import timezone
 import logging
@@ -218,10 +218,10 @@ def create_report_notification(triggered_by, report_type, link, message, departm
         )
 
         logger.info(
-            f"📢 Report notification created for "
+            f"Report notification created for "
             f"{getattr(triggered_by, 'emp_id', triggered_by.username)}: {report_type}"
         )
-        print(f"✅ Notification: {message}")
+        print(f"Notification: {message}")
 
     except Exception as e:
-        logger.error(f"❌ Failed to create report notification: {e}")
+        logger.error(f"Failed to create report notification: {e}")

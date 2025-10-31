@@ -1,5 +1,5 @@
 # ===========================================================
-# reports/utils/pdf_generator.py (Final — Production Ready)
+# reports/utils/pdf_generator.py
 # ===========================================================
 # Utility for generating PDF reports for employee performance
 # using ReportLab. Reusable for both individual and bulk reports.

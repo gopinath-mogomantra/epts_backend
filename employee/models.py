@@ -1,6 +1,5 @@
 # ===========================================================
-# employee/models.py ✅ Final — Admin + Manager + Employee Profile Ready
-# Employee Performance Tracking System (EPTS)
+# employee/models.py
 # ===========================================================
 from django.db import models
 from django.conf import settings
@@ -12,7 +11,7 @@ User = settings.AUTH_USER_MODEL
 
 
 # ===========================================================
-# 🏢 Department Model
+# Department Model
 # ===========================================================
 class Department(models.Model):
     """Represents organizational departments."""
@@ -45,7 +44,7 @@ class Department(models.Model):
 
 
 # ===========================================================
-# 👨‍💼 Employee Model
+# Employee Model
 # ===========================================================
 class Employee(models.Model):
     """Represents employee records linked to the User model."""
@@ -63,7 +62,7 @@ class Employee(models.Model):
     ]
 
     # -----------------------------------------------------------
-    # 🔗 Core Relationships
+    # Core Relationships
     # -----------------------------------------------------------
     user = models.OneToOneField(
         User,
@@ -89,7 +88,7 @@ class Employee(models.Model):
     )
 
     # -----------------------------------------------------------
-    # 🧩 Professional Fields
+    # Professional Fields
     # -----------------------------------------------------------
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="Employee")
     designation = models.CharField(max_length=100, blank=True, null=True)
@@ -99,7 +98,7 @@ class Employee(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="Active")
 
     # -----------------------------------------------------------
-    # 👤 Personal Information
+    # Personal Information
     # -----------------------------------------------------------
     contact_number = models.CharField(max_length=15, blank=True, null=True)
     gender = models.CharField(max_length=10, blank=True, null=True)
@@ -112,7 +111,7 @@ class Employee(models.Model):
     )
 
     # -----------------------------------------------------------
-    # 🏠 Address Information
+    # Address Information
     # -----------------------------------------------------------
     address_line1 = models.CharField(max_length=255, blank=True, null=True)
     address_line2 = models.CharField(max_length=255, blank=True, null=True)
@@ -121,7 +120,7 @@ class Employee(models.Model):
     pincode = models.CharField(max_length=12, blank=True, null=True)
 
     # -----------------------------------------------------------
-    # 🔄 System Flags
+    # System Flags
     # -----------------------------------------------------------
     location = models.CharField(max_length=100, blank=True, null=True)
     is_deleted = models.BooleanField(default=False, help_text="Soft delete flag for employee.")
@@ -129,7 +128,7 @@ class Employee(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     # -----------------------------------------------------------
-    # ⚙️ Meta Configuration
+    # Meta Configuration
     # -----------------------------------------------------------
     class Meta:
         ordering = ["user__emp_id"]
@@ -143,7 +142,7 @@ class Employee(models.Model):
         ]
 
     # -----------------------------------------------------------
-    # 🪪 Utility Properties
+    # Utility Properties
     # -----------------------------------------------------------
     @property
     def emp_id(self):
@@ -163,7 +162,7 @@ class Employee(models.Model):
         return dict(self.ROLE_CHOICES).get(self.role, "Employee")
 
     # -----------------------------------------------------------
-    # ✅ Validation
+    # Validation
     # -----------------------------------------------------------
     def clean(self):
         if hasattr(self, "_validated_from_serializer"):
@@ -204,7 +203,7 @@ class Employee(models.Model):
                 raise ValidationError({"profile_picture": "Only JPG and PNG images are allowed."})
 
     # -----------------------------------------------------------
-    # 💾 Save Override
+    # Save Override
     # -----------------------------------------------------------
     def save(self, *args, **kwargs):
         if self.is_deleted:
@@ -229,7 +228,7 @@ class Employee(models.Model):
         self._old_department_id = self.department_id
 
     # -----------------------------------------------------------
-    # 🗑️ Soft Delete Logic
+    # Soft Delete Logic
     # -----------------------------------------------------------
     def soft_delete(self):
         """Soft delete the employee and deactivate the user account."""

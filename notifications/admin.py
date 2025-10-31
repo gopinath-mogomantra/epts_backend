@@ -1,5 +1,5 @@
 # ===============================================
-# notifications/admin.py (Final Verified Version)
+# notifications/admin.py
 # ===============================================
 # Django Admin configuration for Notifications.
 # Displays notification status, recipient, and timestamps.

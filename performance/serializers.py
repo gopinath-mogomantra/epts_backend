@@ -1,5 +1,5 @@
 # ===========================================================
-# performance/serializers.py ✅ Final Fixed — Business Logic + UI Aligned
+# performance/serializers.py 
 # ===========================================================
 from rest_framework import serializers
 from django.utils import timezone
@@ -11,7 +11,7 @@ User = get_user_model()
 
 
 # ===========================================================
-# ✅ SIMPLE / RELATED SERIALIZERS
+# SIMPLE / RELATED SERIALIZERS
 # ===========================================================
 class SimpleUserSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
@@ -54,7 +54,7 @@ class SimpleEmployeeSerializer(serializers.ModelSerializer):
 
 
 # ===========================================================
-# ✅ READ-ONLY SERIALIZER (List / Detail)
+# READ-ONLY SERIALIZER (List / Detail)
 # ===========================================================
 class PerformanceEvaluationSerializer(serializers.ModelSerializer):
     employee = SimpleEmployeeSerializer(read_only=True)
@@ -127,7 +127,7 @@ class PerformanceEvaluationSerializer(serializers.ModelSerializer):
 
 
 # ===========================================================
-# ✅ CREATE / UPDATE SERIALIZER (Fixed for "employee": "EMPxxxx" input)
+# CREATE / UPDATE SERIALIZER (Fixed for "employee": "EMPxxxx" input)
 # ===========================================================
 class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
     # Accept both 'employee' and 'employee_emp_id' inputs
@@ -150,7 +150,7 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
 
     # ---------------------- Validations ----------------------
     def validate(self, attrs):
-        # ✅ Accept employee via either "employee" or "employee_emp_id"
+        # Accept employee via either "employee" or "employee_emp_id"
         emp_value = attrs.get("employee") or attrs.get("employee_emp_id")
         if not emp_value:
             raise serializers.ValidationError({"employee": "Employee ID is required."})
@@ -161,7 +161,7 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"employee": f"Employee with emp_id '{emp_value}' not found."})
         self.context["employee"] = emp
 
-        # ✅ Evaluator handling
+        # Evaluator handling
         evaluator_value = attrs.get("evaluator_emp_id")
         if evaluator_value:
             try:
@@ -174,7 +174,7 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
             if request and hasattr(request, "user"):
                 self.context["evaluator"] = request.user
 
-        # ✅ Department handling
+        # Department handling
         dept_code = attrs.get("department_code")
         if dept_code:
             try:
@@ -185,7 +185,7 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
         else:
             self.context["department"] = emp.department
 
-        # ✅ Prevent duplicate evaluations for same week/year/type
+        # Prevent duplicate evaluations for same week/year/type
         review_date = attrs.get("review_date", timezone.now().date())
         evaluation_type = attrs.get("evaluation_type", "Manager")
 
@@ -202,7 +202,7 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
                 "duplicate": f"Evaluation already exists for {emp.user.emp_id} (Week {week_number}, {year}, {evaluation_type})."
             })
 
-        # ✅ Metric validation — ensure 0–100 integer values
+        # Metric validation — ensure 0–100 integer values
         for field, value in attrs.items():
             if field.endswith("_skills") or field in [
                 "job_knowledge", "productivity", "creativity",
@@ -216,7 +216,7 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
                 if not (0 <= num <= 100):
                     raise serializers.ValidationError({field: "Metric must be between 0–100."})
 
-        # ✅ Role restriction: Only Admin or Manager can evaluate
+        # Role restriction: Only Admin or Manager can evaluate
         request = self.context.get("request")
         if request and hasattr(request.user, "role"):
             if request.user.role not in ["Admin", "Manager"]:
@@ -253,7 +253,7 @@ class PerformanceCreateUpdateSerializer(serializers.ModelSerializer):
 
 
 # ===========================================================
-# ✅ DASHBOARD / RANKING SERIALIZERS
+# DASHBOARD / RANKING SERIALIZERS
 # ===========================================================
 class PerformanceDashboardSerializer(serializers.ModelSerializer):
     emp_id = serializers.ReadOnlyField(source="employee.user.emp_id")

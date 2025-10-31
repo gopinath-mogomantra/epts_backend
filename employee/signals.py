@@ -1,5 +1,5 @@
 # ===========================================================
-# employee/signals.py (Final — Auto Department Employee Count Sync)
+# employee/signals.py 
 # ===========================================================
 # Handles:
 #   • Auto-update department employee count on employee create, update, delete
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 # ===========================================================
-# 🔹 Helper Function — Update Department Employee Count
+# Helper Function — Update Department Employee Count
 # ===========================================================
 def update_department_count(department):
     """
@@ -38,7 +38,7 @@ def update_department_count(department):
 
 
 # ===========================================================
-# 🔹 PRE-SAVE — Track Department Change
+# PRE-SAVE — Track Department Change
 # ===========================================================
 @receiver(pre_save, sender=Employee)
 def track_department_change(sender, instance, **kwargs):
@@ -59,7 +59,7 @@ def track_department_change(sender, instance, **kwargs):
 
 
 # ===========================================================
-# 🔹 POST-SAVE — Handle Create / Department Move
+# POST-SAVE — Handle Create / Department Move
 # ===========================================================
 @receiver(post_save, sender=Employee)
 def handle_employee_save(sender, instance, created, **kwargs):
@@ -93,7 +93,7 @@ def handle_employee_save(sender, instance, created, **kwargs):
 
 
 # ===========================================================
-# 🔹 POST-DELETE — Handle Employee Removal
+# POST-DELETE — Handle Employee Removal
 # ===========================================================
 @receiver(post_delete, sender=Employee)
 def handle_employee_delete(sender, instance, **kwargs):
@@ -108,6 +108,6 @@ def handle_employee_delete(sender, instance, **kwargs):
 
 
 # ===========================================================
-# 🔹 INFO LOG
+# INFO LOG
 # ===========================================================
 logger.info("✅ [EmployeeSignal] employee/signals.py successfully loaded.")
