@@ -331,7 +331,7 @@ LOGGING = {
 # EMAIL CONFIGURATION (For notifications)
 # -------------------------------------------------------------------
 EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
-
+DEFAULT_FROM_EMAIL = "admin@epts.com"
 """
 # Production email settings (uncomment and configure)
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"

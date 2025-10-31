@@ -13,11 +13,13 @@ from .views import (
     RoleListView,
     UserListView,
     reset_password,
+    regenerate_password,
     UserDetailView,
+    AdminUserListView,
 )
 
 # ===========================================================
-# APP NAMESPACE (for include() usage and Swagger clarity)
+# APP NAMESPACE
 # ===========================================================
 app_name = "users"
 
@@ -31,8 +33,9 @@ app_name = "users"
 # 5. /api/users/change-password/        → Change current user password
 # 6. /api/users/roles/                  → Get available roles
 # 7. /api/users/list/                   → Paginated user list (Admin only)
-# 8. /api/users/reset-password/         → Admin resets user password
-# 9. /api/users/<emp_id>/               → Admin view/update/delete specific user
+# 8. /api/users/reset-password/         → Admin resets user password (existing)
+# 9. /api/users/regenerate-password/    → Admin regenerates temporary password ✅
+# 10. /api/users/<emp_id>/              → Admin view/update/delete specific user
 # ===========================================================
 
 urlpatterns = [
@@ -51,5 +54,7 @@ urlpatterns = [
 
     # 🔁 Admin Utilities
     path("reset-password/", reset_password, name="reset_password"),
+    path("regenerate-password/", regenerate_password, name="regenerate_password"),
+    path("login-details/", AdminUserListView.as_view(), name="login_details"),
     path("<str:emp_id>/", UserDetailView.as_view(), name="user_detail"),
 ]
