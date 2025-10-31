@@ -18,7 +18,7 @@ from django.core.mail import send_mail
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
-import logging
+import logging, re
 
 from employee.models import Employee, Department
 from .serializers import (
@@ -178,7 +178,7 @@ class RegisterView(generics.CreateAPIView):
 
 
 # ===========================================================
-# ✅ 4. CHANGE PASSWORD (Enhanced with Confirm Password)
+# ✅ 4. CHANGE PASSWORD
 # ===========================================================
 class ChangePasswordView(APIView):
     """
@@ -188,23 +188,55 @@ class ChangePasswordView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        serializer = ChangePasswordSerializer(data=request.data, context={"request": request})
+        user = request.user
+        old_password = request.data.get('old_password')
+        new_password = request.data.get('new_password')
+        confirm_password = request.data.get('confirm_password')
 
-        if not request.data.get("confirm_password"):
-            return Response(
-                {"error": "Field 'confirm_password' is required."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        # 1️⃣ Check all fields are provided
+        if not old_password or not new_password or not confirm_password:
+            return Response({
+                "message": "All fields (old_password, new_password, confirm_password) are required.",
+                "status": "error"
+            }, status=status.HTTP_400_BAD_REQUEST)
 
-        serializer.is_valid(raise_exception=True)
-        result = serializer.save()
+        # 2️⃣ Validate old password
+        if not user.check_password(old_password):
+            return Response({
+                "message": "❌ Old password is incorrect.",
+                "status": "error"
+            }, status=status.HTTP_400_BAD_REQUEST)
 
-        logger.info(f"🔑 Password changed successfully for {request.user.emp_id}")
-        return Response(
-            {"message": result.get("message", "✅ Password changed successfully!"), "status": "success"},
-            status=status.HTTP_200_OK,
-        )
+        # 3️⃣ Ensure new password is different from old
+        if old_password == new_password:
+            return Response({
+                "message": "⚠️ New password cannot be the same as the old password.",
+                "status": "error"
+            }, status=status.HTTP_400_BAD_REQUEST)
 
+        # 4️⃣ Ensure new_password == confirm_password
+        if new_password != confirm_password:
+            return Response({
+                "message": "❌ New password and confirm password do not match.",
+                "status": "error"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # 5️⃣ (Optional) Password strength validation
+        pattern = r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*#?&])[A-Za-z\d@$!%*#?&]{8,}$'
+        if not re.match(pattern, new_password):
+            return Response({
+                "message": "🔒 Password must be at least 8 characters long and include uppercase, lowercase, number, and special character.",
+                "status": "error"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # 6️⃣ All checks passed – update password
+        user.set_password(new_password)
+        user.save()
+
+        return Response({
+            "message": "✅ Password changed successfully!",
+            "status": "success"
+        }, status=status.HTTP_200_OK)
 
 # ===========================================================
 # ✅ 5. PROFILE (GET / PATCH)
