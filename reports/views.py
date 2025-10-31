@@ -417,10 +417,103 @@ class ExportWeeklyCSVView(APIView):
             ])
 
         return response
+    
 
 
 # ===========================================================
-# ✅ 7. PRINT PERFORMANCE REPORT (PDF Export via Utility)
+# ✅ 7. EXPORT WEEKLY REPORT AS EXCEL (.xlsx)
+# ===========================================================
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+
+class ExportWeeklyExcelView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        """Export weekly report as downloadable Excel file (.xlsx)."""
+        week = int(request.query_params.get("week", timezone.now().isocalendar()[1]))
+        year = int(request.query_params.get("year", timezone.now().year))
+
+        qs = (
+            PerformanceEvaluation.objects.filter(week_number=week, year=year)
+            .select_related("employee__user", "department")
+            .order_by("-total_score")
+        )
+
+        if not qs.exists():
+            return Response(
+                {"message": f"No performance data found for Week {week}, {year}."},
+                status=status.HTTP_200_OK,
+            )
+
+        # Create Excel Workbook and Sheet
+        wb = Workbook()
+        ws = wb.active
+        ws.title = f"Week {week} Report"
+
+        # Define Header Style
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+        thin_border = Border(
+            left=Side(style="thin"), right=Side(style="thin"),
+            top=Side(style="thin"), bottom=Side(style="thin")
+        )
+
+        # Header Row
+        headers = [
+            "Emp ID", "Employee Name", "Department",
+            "Total Score", "Average Score", "Feedback Avg", "Rank", "Remarks"
+        ]
+        ws.append(headers)
+        for col_num, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_num)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = thin_border
+
+        # Data Rows
+        for idx, p in enumerate(qs, start=2):
+            emp = p.employee
+            fb_avg = get_feedback_average(emp)
+
+            ws.append([
+                emp.user.emp_id,
+                f"{emp.user.first_name} {emp.user.last_name}".strip(),
+                p.department.name if p.department else "-",
+                round(float(p.total_score), 2),
+                round(float(p.average_score), 2),
+                fb_avg,
+                p.rank or "-",
+                p.remarks or "",
+            ])
+
+        # Apply Borders and Alignment to All Cells
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=len(headers)):
+            for cell in row:
+                cell.border = thin_border
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        # Auto-adjust column width
+        for col in ws.columns:
+            max_length = max(len(str(cell.value)) if cell.value else 0 for cell in col)
+            ws.column_dimensions[col[0].column_letter].width = max_length + 4
+
+        # Generate Filename and Response
+        filename = f"Weekly_Report_Week{week}_{year}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+        response = HttpResponse(
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        wb.save(response)
+
+        logger.info(f"📊 Excel report generated for Week {week}, {year} by {request.user.emp_id}")
+        return response
+
+
+
+# ===========================================================
+# ✅ 8. PRINT PERFORMANCE REPORT (PDF Export via Utility)
 # ===========================================================
 class PrintPerformanceReportView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -451,3 +544,102 @@ class PrintPerformanceReportView(APIView):
 
         # ✅ Generate and return the PDF using the centralized utility
         return generate_employee_performance_pdf(employee, evaluations, week)
+
+
+
+# ===========================================================
+# ✅ 9. EXPORT MONTHLY REPORT AS EXCEL (.xlsx)
+# ===========================================================
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+
+class ExportMonthlyExcelView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        """Export monthly consolidated report as Excel (.xlsx)."""
+        month = int(request.query_params.get("month", timezone.now().month))
+        year = int(request.query_params.get("year", timezone.now().year))
+
+        # Fetch data using same logic as MonthlyReportView
+        qs = PerformanceEvaluation.objects.filter(
+            review_date__month=month, year=year
+        ).select_related("employee__user", "department")
+
+        if not qs.exists():
+            return Response(
+                {"message": f"No performance data found for {month}/{year}."},
+                status=status.HTTP_200_OK,
+            )
+
+        employees = Employee.objects.filter(id__in=qs.values_list("employee_id", flat=True))
+        wb = Workbook()
+        ws = wb.active
+        ws.title = f"Month {month} Report"
+
+        # Header styles
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+        thin_border = Border(
+            left=Side(style="thin"), right=Side(style="thin"),
+            top=Side(style="thin"), bottom=Side(style="thin")
+        )
+
+        # Header row
+        headers = [
+            "Emp ID", "Employee Name", "Department", "Avg Score",
+            "Feedback Avg", "Best Week", "Best Week Score"
+        ]
+        ws.append(headers)
+        for col_num, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_num)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = thin_border
+
+        # Data rows
+        for idx, emp in enumerate(employees.select_related("user", "department"), start=2):
+            emp_qs = qs.filter(employee=emp)
+            if not emp_qs.exists():
+                continue
+
+            avg_score = round(emp_qs.aggregate(avg=Avg("average_score"))["avg"], 2)
+            best_week_obj = emp_qs.order_by("-average_score").first()
+            fb_avg = get_feedback_average(
+                emp,
+                start_date=best_week_obj.created_at - timedelta(days=30),
+                end_date=best_week_obj.created_at,
+            )
+
+            ws.append([
+                emp.user.emp_id,
+                f"{emp.user.first_name} {emp.user.last_name}".strip(),
+                emp.department.name if emp.department else "-",
+                avg_score,
+                fb_avg,
+                best_week_obj.week_number,
+                best_week_obj.average_score,
+            ])
+
+        # Borders & alignment
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=len(headers)):
+            for cell in row:
+                cell.border = thin_border
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        # Auto width
+        for col in ws.columns:
+            max_length = max(len(str(cell.value)) if cell.value else 0 for cell in col)
+            ws.column_dimensions[col[0].column_letter].width = max_length + 4
+
+        # Generate filename and response
+        filename = f"Monthly_Report_{month}_{year}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+        response = HttpResponse(
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        wb.save(response)
+
+        logger.info(f"📊 Monthly Excel report generated for {month}/{year} by {request.user.emp_id}")
+        return response

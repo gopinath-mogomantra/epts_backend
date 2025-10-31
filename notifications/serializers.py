@@ -48,6 +48,7 @@ class NotificationSerializer(serializers.ModelSerializer):
             "employee",
             "department_name",
             "message",
+            "link",
             "category",
             "category_icon",
             "is_read",
@@ -67,6 +68,7 @@ class NotificationSerializer(serializers.ModelSerializer):
             "status_display",
             "meta_display",
             "category_icon",
+            "link",
         ]
 
     # -------------------------------------------------------

@@ -33,6 +33,14 @@ class Notification(models.Model):
         help_text="Short notification message or description.",
     )
 
+    link = models.CharField(
+    max_length=255,
+    null=True,
+    blank=True,
+    help_text="Optional URL or route link for redirection (e.g., /reports/weekly/?week=44&year=2025)",
+    )
+
+
     category = models.CharField(
         max_length=50,
         default="performance",

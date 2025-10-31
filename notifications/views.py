@@ -10,7 +10,6 @@ from rest_framework.pagination import PageNumberPagination
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db import transaction
-
 from .models import Notification
 from .serializers import NotificationSerializer
 
@@ -193,3 +192,32 @@ class NotificationDeleteView(generics.DestroyAPIView):
 
         notification.delete()
         return Response({"message": "🗑️ Notification deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
+
+
+
+# ===========================================================
+# 🧩 Inline Helper: Report Notification Generator
+# ===========================================================
+from django.utils import timezone
+import logging
+
+logger = logging.getLogger(__name__)
+
+def create_report_notification(triggered_by, report_type, link, message, department=None):
+    from .models import Notification  # local import to avoid circular dependency
+
+    try:
+        Notification.objects.create(
+            employee=triggered_by,
+            message=message,
+            category="report",
+            link=link,
+            auto_delete=False,
+            department=department,
+        )
+
+        logger.info(f"📢 Report notification created for {triggered_by.emp_id}: {report_type}")
+        print(f"✅ Notification: {message}")
+
+    except Exception as e:
+        logger.error(f"❌ Failed to create report notification: {e}")
