@@ -204,6 +204,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 def create_report_notification(triggered_by, report_type, link, message, department=None):
+    """Creates a notification entry for reports, used by reports module."""
     from .models import Notification  # local import to avoid circular dependency
 
     try:
@@ -216,7 +217,10 @@ def create_report_notification(triggered_by, report_type, link, message, departm
             department=department,
         )
 
-        logger.info(f"📢 Report notification created for {triggered_by.emp_id}: {report_type}")
+        logger.info(
+            f"📢 Report notification created for "
+            f"{getattr(triggered_by, 'emp_id', triggered_by.username)}: {report_type}"
+        )
         print(f"✅ Notification: {message}")
 
     except Exception as e:

@@ -1,96 +1,62 @@
 # ===========================================================
 # reports/urls.py ✅ (Frontend-Aligned & Production-Ready)
-# Employee Performance Tracking System (EPTS)
 # ===========================================================
 
 from django.urls import path
 from .views import (
     WeeklyReportView,
     MonthlyReportView,
-    ManagerReportView,
     DepartmentReportView,
-    EmployeeHistoryView,
-    ExportWeeklyCSVView,
-    ExportWeeklyExcelView,      # ✅ NEW Excel export
-    PrintPerformanceReportView,
+    ManagerReportView,
+    ExportWeeklyExcelView,
     ExportMonthlyExcelView,
-
+    CachedReportListView,
+    CachedReportArchiveView,
+    CachedReportRestoreView,
 )
 
-# -----------------------------------------------------------
-# 🌐 App Namespace
-# -----------------------------------------------------------
+# 🌐 Namespace
 app_name = "reports"
 
-# -----------------------------------------------------------
+# ===========================================================
 # 📘 ROUTE SUMMARY
-# -----------------------------------------------------------
+# ===========================================================
 """
 Reporting & Analytics Endpoints:
 -------------------------------------------------------------
 🔹 /api/reports/weekly/                     → Weekly consolidated report
 🔹 /api/reports/monthly/                    → Monthly consolidated report
-🔹 /api/reports/manager/                    → Manager-wise weekly report
 🔹 /api/reports/department/                 → Department-wise weekly report
-🔹 /api/reports/employee/<emp_id>/history/  → Employee performance trend
-🔹 /api/reports/export/weekly-csv/          → Weekly CSV export
-🔹 /api/reports/export/weekly-excel/        → Weekly Excel (.xlsx) export ✅
-🔹 /api/reports/print/<emp_id>/             → PDF export for performance report
+🔹 /api/reports/manager/                    → Manager-wise weekly report (placeholder)
+🔹 /api/reports/export/weekly-excel/        → Weekly Excel export (.xlsx)
+🔹 /api/reports/export/monthly-excel/       → Monthly Excel export (.xlsx)
+🔹 /api/reports/cache/                      → Cached report listing (Admin/Manager)
+🔹 /api/reports/cache/<id>/archive/         → Archive cached report
+🔹 /api/reports/cache/<id>/restore/         → Restore cached report
 -------------------------------------------------------------
-All routes are authenticated & role-based (Admin/Manager).
+All routes are authenticated (Admin/Manager access).
 """
 
-# -----------------------------------------------------------
+# ===========================================================
 # 🚀 URL Patterns
-# -----------------------------------------------------------
+# ===========================================================
 urlpatterns = [
-    # 🔹 1️⃣ Weekly Consolidated Report
+    # 🔹 Weekly & Monthly Reports
     path("weekly/", WeeklyReportView.as_view(), name="weekly_report"),
-
-    # 🔹 2️⃣ Monthly Consolidated Report
     path("monthly/", MonthlyReportView.as_view(), name="monthly_report"),
 
-    # 🔹 3️⃣ Manager-Wise Weekly Report
-    path("manager/", ManagerReportView.as_view(), name="manager_report"),
-
-    # 🔹 4️⃣ Department-Wise Weekly Report
+    # 🔹 Department-Wise Report
     path("department/", DepartmentReportView.as_view(), name="department_report"),
 
-    # 🔹 5️⃣ Employee Performance History (Trend)
-    path(
-        "employee/<str:emp_id>/history/",
-        EmployeeHistoryView.as_view(),
-        name="employee_history",
-    ),
+    # 🔹 Manager-Wise Report (placeholder)
+    path("manager/", ManagerReportView.as_view(), name="manager_report"),
 
-    # 🔹 6️⃣ Export Weekly Report as CSV
-    path(
-        "export/weekly-csv/",
-        ExportWeeklyCSVView.as_view(),
-        name="export_weekly_csv",
-    ),
+    # 🔹 Excel Exports
+    path("export/weekly-excel/", ExportWeeklyExcelView.as_view(), name="export_weekly_excel"),
+    path("export/monthly-excel/", ExportMonthlyExcelView.as_view(), name="export_monthly_excel"),
 
-    # 🔹 7️⃣ Export Weekly Report as Excel (.xlsx) ✅
-    path(
-        "export/weekly-excel/",
-        ExportWeeklyExcelView.as_view(),
-        name="export_weekly_excel",
-    ),
-
-
-    # 🔹 8️⃣ Print Performance Report (PDF Export)
-    path(
-        "print/<str:emp_id>/",
-        PrintPerformanceReportView.as_view(),
-        name="report_print",
-    ),
-
-    # 🔹 8️⃣ Export Monthly Report as Excel
-# Example: /api/reports/export/monthly-excel/?month=10&year=2025
-path(
-    "export/monthly-excel/",
-    ExportMonthlyExcelView.as_view(),
-    name="export_monthly_excel",
-),
-
+    # 🔹 Cached Reports
+    path("cache/", CachedReportListView.as_view(), name="cached_reports_dashboard"),
+    path("cache/<int:pk>/archive/", CachedReportArchiveView.as_view(), name="cached_report_archive"),
+    path("cache/<int:pk>/restore/", CachedReportRestoreView.as_view(), name="cached_report_restore"),
 ]
