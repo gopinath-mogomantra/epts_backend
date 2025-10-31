@@ -25,7 +25,7 @@ class NotificationSerializer(serializers.ModelSerializer):
 
     # 🔹 Readable department name (for broadcast messages)
     department_name = serializers.CharField(
-        source="department.name", read_only=True, default=None
+        source="department.name", read_only=True, default=""
     )
 
     # 🔹 Computed UI helper fields
@@ -34,12 +34,11 @@ class NotificationSerializer(serializers.ModelSerializer):
     category_icon = serializers.SerializerMethodField()
 
     # 🔹 Formatted timestamps
-    created_at = serializers.DateTimeField(
-        format="%Y-%m-%d %H:%M:%S", read_only=True
-    )
-    read_at = serializers.DateTimeField(
-        format="%Y-%m-%d %H:%M:%S", read_only=True, required=False
-    )
+    created_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True)
+    read_at = serializers.DateTimeField(format="%Y-%m-%d %H:%M:%S", read_only=True, required=False)
+
+    # 🔹 Optional “time since created” (if added in model)
+    time_since_created = serializers.ReadOnlyField()
 
     class Meta:
         model = Notification
@@ -57,6 +56,7 @@ class NotificationSerializer(serializers.ModelSerializer):
             "created_at",
             "read_at",
             "auto_delete",
+            "time_since_created",
         ]
         read_only_fields = [
             "id",
@@ -69,6 +69,7 @@ class NotificationSerializer(serializers.ModelSerializer):
             "meta_display",
             "category_icon",
             "link",
+            "time_since_created",
         ]
 
     # -------------------------------------------------------
@@ -97,6 +98,7 @@ class NotificationSerializer(serializers.ModelSerializer):
             "feedback": "💬",
             "system": "⚙️",
             "alert": "🚨",
+            "report": "🧾",
         }
         return icon_map.get(obj.category, "📢")
 
