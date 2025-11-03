@@ -10,15 +10,60 @@ from django.utils.crypto import get_random_string
 from django.core.mail import send_mail              
 from django.conf import settings                
 from django.utils import timezone
+from django.contrib.auth.hashers import check_password
 import random
 import string
 import logging
-import re
+import re, time
 from datetime import datetime, date
 from employee.models import Department, Employee 
 
 User = get_user_model()
 logger = logging.getLogger("users")
+
+
+class PasswordValidator:
+    """Centralized password validation with comprehensive rules."""
+    
+    MIN_LENGTH = 8
+    REQUIRE_UPPERCASE = True
+    REQUIRE_LOWERCASE = True
+    REQUIRE_DIGIT = True
+    REQUIRE_SPECIAL = True
+    SPECIAL_CHARS = r"[!@#$%^&*(),.?\":{}|<>]"
+    
+    @classmethod
+    def validate(cls, password):
+        """
+        Validate password strength.
+        Raises ValidationError with all failed requirements.
+        """
+        errors = []
+        
+        if len(password) < cls.MIN_LENGTH:
+            errors.append(f"Password must be at least {cls.MIN_LENGTH} characters long.")
+        
+        if cls.REQUIRE_UPPERCASE and not re.search(r"[A-Z]", password):
+            errors.append("Include at least one uppercase letter.")
+        
+        if cls.REQUIRE_LOWERCASE and not re.search(r"[a-z]", password):
+            errors.append("Include at least one lowercase letter.")
+        
+        if cls.REQUIRE_DIGIT and not re.search(r"\d", password):
+            errors.append("Include at least one digit.")
+        
+        if cls.REQUIRE_SPECIAL and not re.search(cls.SPECIAL_CHARS, password):
+            errors.append("Include at least one special character (!@#$%^&*).")
+        
+        # Check for common weak passwords
+        weak_passwords = ['password', '12345678', 'qwerty123']
+        if password.lower() in weak_passwords:
+            errors.append("This password is too common and weak.")
+        
+        if errors:
+            raise serializers.ValidationError(errors)
+        
+        return password
 
 
 # ===========================================================
@@ -37,61 +82,83 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         login_input = attrs.get("username")
         password = attrs.get("password")
-
+        
         if not login_input or not password:
             raise serializers.ValidationError(
-                {"detail": "Both username (emp_id/username/email) and password are required."}
+                {"detail": "Both username and password are required."}
             )
+        
+        # Add small random delay to prevent timing attacks
+        ANTI_TIMING_BASE_DELAY = 0.05
+        ANTI_TIMING_RANDOM_DELAY = 0.1
 
-        # Match by username / emp_id / email
+        time.sleep(ANTI_TIMING_BASE_DELAY + random.uniform(0, ANTI_TIMING_RANDOM_DELAY))
+        
+        # Fetch user
         user = User.objects.filter(
             models.Q(username__iexact=login_input)
             | models.Q(emp_id__iexact=login_input)
             | models.Q(email__iexact=login_input)
         ).first()
-
-        if not user:
-            raise serializers.ValidationError({"detail": "Invalid username or password."})
-
-        # Account lock check
-        if getattr(user, "account_locked", False):
-            if getattr(user, "locked_at", None):
+        
+        # Always check password even if user doesn't exist (constant-time)
+        if user:
+            password_valid = user.check_password(password)
+        else:
+            # Perform dummy hash check to maintain constant timing
+            check_password(password, "pbkdf2_sha256$260000$dummy$dummy")
+            password_valid = False
+        
+        # If user doesn't exist or password invalid, return generic error
+        if not user or not password_valid:
+            # Increment failed attempts if user exists
+            if user and hasattr(user, "increment_failed_attempts"):
+                user.increment_failed_attempts()
+                # Refresh to get updated lock status
+                user.refresh_from_db(fields=['account_locked', 'failed_login_attempts'])
+                
+                if user.account_locked:
+                    raise serializers.ValidationError({
+                        "detail": f"Too many failed attempts. Account locked for {self.LOCK_DURATION_HOURS} hours."
+                    })
+                remaining = max(0, self.LOCK_THRESHOLD - user.failed_login_attempts)
+                raise serializers.ValidationError({
+                    "detail": f"Invalid credentials. {remaining} attempt(s) left."
+                })
+            
+            raise serializers.ValidationError({
+                "detail": "Invalid username or password."
+            })
+        
+        # Check if account is locked (Line 64-76)
+        if user.account_locked:
+            if user.locked_at:
                 elapsed = timezone.now() - user.locked_at
                 remaining = max(0, self.LOCK_DURATION_HOURS * 3600 - elapsed.total_seconds())
                 if remaining > 0:
                     hrs, mins = divmod(int(remaining // 60), 60)
-                    raise serializers.ValidationError(
-                        {"detail": f"Account locked. Try again after {hrs}h {mins}m."}
-                    )
+                    raise serializers.ValidationError({
+                        "detail": f"Account locked. Try again after {hrs}h {mins}m."
+                    })
                 else:
-                    if hasattr(user, "unlock_account"):
-                        user.unlock_account()
-
-        # Validate password
-        if not user.check_password(password):
-            if hasattr(user, "increment_failed_attempts"):
-                user.increment_failed_attempts()
-            if getattr(user, "account_locked", False):
-                raise serializers.ValidationError({
-                    "detail": f"Too many failed attempts. Account locked for {self.LOCK_DURATION_HOURS} hours."
-                })
-            remaining = max(0, self.LOCK_THRESHOLD - getattr(user, "failed_login_attempts", 0))
-            raise serializers.ValidationError({"detail": f"Invalid credentials. {remaining} attempt(s) left."})
-
-        # Reset failed login attempts
+                    # Lock expired, unlock account
+                    user.unlock_account()
+        
+        # Reset failed login attempts on successful auth
         if hasattr(user, "reset_login_attempts"):
             user.reset_login_attempts()
-
-        if getattr(user, "force_password_change", False):
+        
+        # Check if password change is forced
+        if user.force_password_change:
             raise serializers.ValidationError({
                 "force_password_change": True,
                 "detail": "Password change required before login."
             })
-
-        # JWT creation
+        
+        # Generate JWT tokens
         refresh = self.get_token(user)
         access = refresh.access_token
-
+        
         data = {
             "refresh": str(refresh),
             "access": str(access),
@@ -106,11 +173,12 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 "department": user.department.name if user.department else None,
                 "manager": user.manager.username if user.manager else None,
                 "status": user.status,
-                "is_verified": getattr(user, "is_verified", False),
+                "is_verified": user.is_verified,
                 "is_active": user.is_active,
             },
         }
         return data
+
 
     @classmethod
     def get_token(cls, user):
@@ -164,10 +232,19 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     # ---------------- Field Validations ----------------
     def validate_email(self, value):
-        if User.objects.filter(email__iexact=value).exists():
+        # Get current instance (for updates)
+        instance = getattr(self, 'instance', None)
+        
+        # Check if email exists (excluding current user during updates)
+        query = User.objects.filter(email__iexact=value)
+        if instance:
+            query = query.exclude(pk=instance.pk)
+        
+        if query.exists():
             raise serializers.ValidationError("Email already exists.")
-        return value
-
+        
+        return value.lower()  # Normalize email
+    
     def validate_phone(self, value):
         if value and User.objects.filter(phone=value).exists():
             raise serializers.ValidationError("Phone number already exists.")
@@ -259,12 +336,14 @@ class RegisterSerializer(serializers.ModelSerializer):
         # Generate Emp ID
         last_user = User.objects.select_for_update().order_by("-id").first()
         last_num = int(last_user.emp_id.replace("EMP", "")) if last_user and last_user.emp_id else 0
-        new_emp_id = f"EMP{last_num + 1:04d}"
+        # Use the manager's secure method
+        new_emp_id = User.objects.generate_emp_id()
 
         # Temporary Password
-        first_name = validated_data.get("first_name", "User").capitalize()
-        random_part = "".join(random.choices(string.ascii_letters + string.digits, k=4))
-        temp_password = f"{first_name}@{random_part}"
+        temp_password = get_random_string(
+            length=12,
+            allowed_chars="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
+        )
 
         # Create User
         user = User.objects.create_user(
@@ -296,14 +375,20 @@ class RegisterSerializer(serializers.ModelSerializer):
     # ---------------- RESPONSE FORMAT ----------------
     def to_representation(self, instance):
         rep = super().to_representation(instance)
-        rep["temp_password"] = getattr(instance, "temp_password", None)
-        if instance.department:
+        
+        # Only expose temp_password in DEBUG mode
+        if settings.DEBUG:
+            rep["temp_password"] = getattr(instance, "temp_password", None)
+        
+        # Safe FK access (won't query if prefetched)
+        if instance.department_id:
             rep["department"] = instance.department.name
             rep["department_code"] = getattr(instance.department, "code", None)
-        if instance.manager:
+        
+        if instance.manager_id:
             rep["manager"] = instance.manager.username
+        
         return rep
-
 
 # ===========================================================
 # 3. CHANGE PASSWORD SERIALIZER (Enhanced)
@@ -318,33 +403,34 @@ class ChangePasswordSerializer(serializers.Serializer):
         if not user.check_password(value):
             raise serializers.ValidationError("Old password is incorrect.")
         return value
-
+    
     def validate_new_password(self, value):
-        if len(value) < 8:
-            raise serializers.ValidationError("Password must be at least 8 characters long.")
-        if not re.search(r"[A-Z]", value):
-            raise serializers.ValidationError("Include at least one uppercase letter.")
-        if not re.search(r"[a-z]", value):
-            raise serializers.ValidationError("Include at least one lowercase letter.")
-        if not re.search(r"\d", value):
-            raise serializers.ValidationError("Include at least one digit.")
-        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", value):
-            raise serializers.ValidationError("Include at least one special character.")
-        return value
-
+        return PasswordValidator.validate(value)
+    
     def validate(self, attrs):
         if attrs.get("new_password") != attrs.get("confirm_password"):
             raise serializers.ValidationError({"confirm_password": "New and confirm password must match."})
         return attrs
 
+    @transaction.atomic
     def save(self, **kwargs):
         user = self.context["request"].user
+        
+        # Lock the user row to prevent concurrent modifications
+        User.objects.filter(pk=user.pk).select_for_update().first()
+        user.refresh_from_db()
+        
+        # Set new password (includes history check)
         user.set_password(self.validated_data["new_password"])
         user.force_password_change = False
         user.save(update_fields=["password", "force_password_change"])
-        logger.info(f"Password changed successfully for {user.emp_id}")
+        
+        logger.info(
+            f"Password changed successfully for {user.emp_id}",
+            extra={'emp_id': user.emp_id, 'action': 'password_change'}
+        )
+        
         return {"message": "Password changed successfully!"}
-
 
 # ===========================================================
 # 4. PROFILE SERIALIZER

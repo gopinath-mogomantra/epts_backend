@@ -9,9 +9,14 @@ from django.utils import timezone
 from django.core.validators import RegexValidator
 from django.core.exceptions import ValidationError
 from django.utils.crypto import get_random_string
+from django.contrib.auth.hashers import check_password, make_password
 from datetime import timedelta, datetime
 import uuid
+import logging
 import os
+from django.db import connection
+
+logger = logging.getLogger("users")
 
 
 # ===========================================================
@@ -65,22 +70,29 @@ class UserManager(BaseUserManager):
     """Custom user manager handling secure emp_id generation."""
 
     def generate_emp_id(self):
-        """Generate sequential employee ID (EMP0001, EMP0002...)."""
+        """Generate a unique emp_id in the format EMP0001, EMP0002, etc."""
         with transaction.atomic():
-            # This uses the stored emp_id string; ensure numeric parse is guarded.
-            result = self.model.objects.select_for_update().aggregate(max_emp_id=Max('emp_id'))
-            last_emp_id = result.get('max_emp_id')
+            table_name = self.model._meta.db_table
 
-            if last_emp_id and isinstance(last_emp_id, str) and last_emp_id.startswith("EMP"):
+            with connection.cursor() as cursor:
+                # Vendor-aware locking
+                query = f"SELECT emp_id FROM {table_name} ORDER BY id DESC LIMIT 1"
+                if connection.vendor == "postgresql":
+                    query += " FOR UPDATE"
+                cursor.execute(query)
+                result = cursor.fetchone()
+
+            if result and result[0]:
                 try:
-                    num = int(last_emp_id.replace("EMP", ""))
+                    num = int(result[0].replace("EMP", ""))
                     return f"EMP{num + 1:04d}"
                 except (ValueError, AttributeError):
-                    pass
-            return "EMP0001"
+                    logger.warning(f"Invalid emp_id format found: {result[0]}")
 
+            return "EMP0001"
+        
     def create_user(self, username=None, password=None, **extra_fields):
-        """Create a regular user with secure defaults."""
+        """Create a regular user with secure defaults and log temp password for testing."""
         emp_id = extra_fields.get("emp_id") or self.generate_emp_id()
         username = username or emp_id
 
@@ -92,19 +104,45 @@ class UserManager(BaseUserManager):
 
         extra_fields["emp_id"] = emp_id
         extra_fields.setdefault("is_active", True)
+
+        # Build user instance
         user = self.model(username=username, **extra_fields)
+        # Use set_password so hashing + history logic works
         user.set_password(password)
+        # store temp password in DB field (for development/testing only)
+        user.temp_password = password
+
+        # Save user
         user.save(using=self._db)
 
-        # Optional: Log creation (safe for dev only)
+        # Log to local file for testing (safe, dev-only)
         try:
-            log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "logs")
+            # logs directory at project root (e.g. epts_backend/logs/)
+            base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            log_dir = os.path.join(base_dir, "logs")
             os.makedirs(log_dir, exist_ok=True)
-            with open(os.path.join(log_dir, "user_creation.log"), "a") as f:
-                f.write(f"[{datetime.now()}] Created user {username} ({emp_id})\n")
+            log_path = os.path.join(log_dir, "temp_passwords.txt")
+
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(
+                    f"[{timezone.now().strftime('%Y-%m-%d %H:%M:%S')}] "
+                    f"{emp_id} - {getattr(user, 'email', '')} - {getattr(user, 'role', '')} - TempPassword: {password}\n"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to log temp password for {emp_id}: {e}")
+
+        # Optional console output when DEBUG (helps live testing)
+        try:
+            from django.conf import settings
+            if getattr(settings, "DEBUG", False):
+                print(f"[TEMP-PASS] {emp_id} {getattr(user, 'email', '')} -> {password}")
         except Exception:
-            # Do not break user creation if logging fails
             pass
+
+        logger.info(
+            f"User created: {emp_id} (username: {username})",
+            extra={'emp_id': emp_id, 'username': username, 'created_by': 'system'}
+        )
 
         return user
 
@@ -253,33 +291,53 @@ class User(AbstractBaseUser, PermissionsMixin):
     # ======================================================
     # VALIDATION
     # ======================================================
+    def _check_circular_manager(self):
+        """Check for circular manager references efficiently."""
+        if not self.manager_id:
+            return
+        
+        visited = {self.pk}
+        current_id = self.manager_id
+        
+        # Use values_list to avoid loading full objects
+        while current_id:
+            if current_id in visited:
+                raise ValidationError({
+                    'manager': 'Circular manager relationship detected.'
+                })
+            visited.add(current_id)
+            
+            # Single query to get next manager ID
+            next_manager_id = User.objects.filter(
+                pk=current_id
+            ).values_list('manager_id', flat=True).first()
+            
+            current_id = next_manager_id
+            
+            # Safety check: prevent infinite loops on bad data
+            if len(visited) > 100:
+                logger.error(f"Possible manager chain corruption for user {self.emp_id}")
+                raise ValidationError({
+                    'manager': 'Manager relationship chain is too deep.'
+                })
+
     def clean(self):
-        """
-        Model-level validation.
-        Avoid deep FK traversal when PK not yet assigned.
-        """
+        """Model-level validation."""
         super().clean()
-
-        # Employees should have a department (this uses the in-memory field too)
-        if self.role == "Employee" and not self.department:
-            raise ValidationError({'department': 'Employees must belong to a department.'})
-
-        # Prevent user being their own manager (use manager_id to avoid FK object resolution)
-        if self.manager_id and self.id and self.manager_id == self.id:
-            raise ValidationError({'manager': 'User cannot be their own manager.'})
-
-        # Circular manager check only when PK exists (can't reliably check before PK)
-        if self.pk and self.manager_id:
-            visited = {self.pk}
-            current = self.manager
-            while current:
-                # defensive: stop if no PK on manager
-                if not getattr(current, 'pk', None):
-                    break
-                if current.pk in visited:
-                    raise ValidationError({'manager': 'Circular manager relationship detected.'})
-                visited.add(current.pk)
-                current = current.manager
+        
+        if self.role == "Employee" and not self.department_id:
+            raise ValidationError({
+                'department': 'Employees must belong to a department.'
+            })
+        
+        if self.manager_id and self.pk:
+            if self.manager_id == self.pk:
+                raise ValidationError({
+                    'manager': 'User cannot be their own manager.'
+                })
+            
+            # Check for circular references
+            self._check_circular_manager()
 
     def save(self, *args, **kwargs):
         """
@@ -327,32 +385,58 @@ class User(AbstractBaseUser, PermissionsMixin):
     # ======================================================
     # ACCOUNT LOCKOUT & LOGIN ATTEMPTS
     # ======================================================
+    @transaction.atomic
     def lock_account(self):
+        """Lock user account due to failed login attempts."""
         self.account_locked = True
         self.is_active = False
         self.locked_at = timezone.now()
         self.save(update_fields=["account_locked", "is_active", "locked_at"])
+        logger.warning(f"Account locked: {self.emp_id}")
 
+    @transaction.atomic
     def unlock_account(self):
+        """Unlock user account and reset failed attempts."""
         self.account_locked = False
         self.is_active = True
         self.failed_login_attempts = 0
         self.locked_at = None
-        self.save(update_fields=["account_locked", "is_active", "failed_login_attempts", "locked_at"])
-
+        self.save(update_fields=[
+            "account_locked", "is_active", "failed_login_attempts", "locked_at"
+        ])
+        logger.info(f"Account unlocked: {self.emp_id}")
+        
+    @transaction.atomic
     def increment_failed_attempts(self):
+        """Safely increment failed login attempts with proper locking."""
+        # Refresh from database with lock to prevent race conditions
+        User.objects.filter(pk=self.pk).select_for_update().first()
+        self.refresh_from_db(fields=['account_locked', 'locked_at', 'failed_login_attempts'])
+        
         # Auto-unlock if lock period expired
         if self.account_locked and self.locked_at:
-            if timezone.now() >= self.locked_at + timedelta(hours=2):
+            lock_expiry = self.locked_at + timedelta(hours=2)
+            if timezone.now() >= lock_expiry:
                 self.unlock_account()
                 return
+        
+        # Don't increment if already locked
         if self.account_locked:
             return
-        self.failed_login_attempts += 1
+        
+        # Use F() expression for atomic increment
+        User.objects.filter(pk=self.pk).update(
+            failed_login_attempts=models.F('failed_login_attempts') + 1
+        )
+        
+        # Refresh to get the updated count
+        self.refresh_from_db(fields=['failed_login_attempts'])
+        
+        # Lock account if threshold reached
         if self.failed_login_attempts >= 5:
             self.lock_account()
-        else:
-            self.save(update_fields=["failed_login_attempts"])
+        
+        logger.info(f"Failed login attempt for {self.emp_id}: {self.failed_login_attempts}/5")
 
     def reset_login_attempts(self):
         if self.failed_login_attempts > 0 or self.account_locked:
@@ -365,28 +449,43 @@ class User(AbstractBaseUser, PermissionsMixin):
     # PASSWORD MANAGEMENT
     # ======================================================
     def set_password(self, raw_password):
-        from django.contrib.auth.hashers import check_password, make_password
-
-        # If user exists in DB, check last 5 password hashes
+        """Set password with history check and proper validation."""
+        
+        # Check password history BEFORE setting
         if self.pk:
-            recent_passwords = PasswordHistory.objects.filter(user=self).order_by('-created_at')[:5]
+            recent_passwords = PasswordHistory.objects.filter(
+                user=self
+            ).order_by('-created_at')[:5]
+            
             for old_pw in recent_passwords:
                 try:
                     if check_password(raw_password, old_pw.password_hash):
-                        raise ValidationError("Cannot reuse any of your last 5 passwords.")
-                except Exception:
-                    # ignore broken history rows rather than block password set
+                        raise ValidationError(
+                            "Cannot reuse any of your last 5 passwords."
+                        )
+                except ValidationError:
+                    raise  # Re-raise ValidationError
+                except Exception as e:
+                    # Log but continue - don't let corrupt history block password changes
+                    logger.warning(
+                        f"Error checking password history for {self.emp_id}: {e}"
+                    )
                     continue
-
+        
+        # Set the password only if validation passed
         super().set_password(raw_password)
-
-        # Store in password history only after user has a PK
+        
+        # Add to password history
         if self.pk:
             try:
-                PasswordHistory.add_password(self, make_password(raw_password))
-            except Exception:
-                # don't fail password set if history fails
-                pass
+                new_hash = make_password(raw_password)
+                PasswordHistory.add_password(self, new_hash)
+            except Exception as e:
+                # Log but don't fail the password set
+                logger.error(
+                    f"Failed to save password history for {self.emp_id}: {e}",
+                    exc_info=True
+                )
 
     def mark_password_changed(self):
         self.force_password_change = False

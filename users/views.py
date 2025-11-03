@@ -33,6 +33,7 @@ logger = logging.getLogger("users")
 User = get_user_model()
 
 
+
 # ===========================================================
 # HELPER PERMISSION FUNCTIONS
 # ===========================================================
@@ -104,9 +105,12 @@ class RegisterView(generics.CreateAPIView):
         if User.objects.filter(email__iexact=email).exists():
             return Response({"error": "Email already exists."}, status=400)
 
-        # Create User (serializer handles this safely)
+        # Create User with prefetching (Line 100)
         user = serializer.save()
 
+        # Prefetch for employee sync
+        user = User.objects.select_related('department', 'manager').get(pk=user.pk)
+        
         # Auto-fill joining_date if missing
         if not user.joining_date:
             user.joining_date = timezone.now().date()
@@ -177,105 +181,98 @@ class RegisterView(generics.CreateAPIView):
 
 
 # ===========================================================
-# 4. CHANGE PASSWORD
+# 4. CHANGE PASSWORD (FIXED - Use Serializer)
 # ===========================================================
 class ChangePasswordView(APIView):
     """
     POST /api/users/change-password/
     Allows authenticated users to securely change their password.
+    Uses ChangePasswordSerializer for validation.
     """
     permission_classes = [IsAuthenticated]
 
+    @transaction.atomic
     def post(self, request):
-        user = request.user
-        old_password = request.data.get('old_password')
-        new_password = request.data.get('new_password')
-        confirm_password = request.data.get('confirm_password')
-
-        # Check all fields are provided
-        if not old_password or not new_password or not confirm_password:
+        serializer = ChangePasswordSerializer(
+            data=request.data,
+            context={'request': request}
+        )
+        
+        try:
+            serializer.is_valid(raise_exception=True)
+        except Exception as e:
             return Response({
-                "message": "All fields (old_password, new_password, confirm_password) are required.",
+                "message": str(e),
                 "status": "error"
             }, status=status.HTTP_400_BAD_REQUEST)
-
-        # Validate old password
-        if not user.check_password(old_password):
-            return Response({
-                "message": "Old password is incorrect.",
-                "status": "error"
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        # Ensure new password is different from old
-        if old_password == new_password:
-            return Response({
-                "message": "New password cannot be the same as the old password.",
-                "status": "error"
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        # Ensure new_password == confirm_password
-        if new_password != confirm_password:
-            return Response({
-                "message": "New password and confirm password do not match.",
-                "status": "error"
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        # 5️⃣ (Optional) Password strength validation
-        pattern = r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*#?&])[A-Za-z\d@$!%*#?&]{8,}$'
-        if not re.match(pattern, new_password):
-            return Response({
-                "message": "Password must be at least 8 characters long and include uppercase, lowercase, number, and special character.",
-                "status": "error"
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        # All checks passed – update password
-        user.set_password(new_password)
-        user.save()
-
+        
+        # Save with transaction and locking
+        result = serializer.save()
+        
+        logger.info(
+            f"Password changed for {request.user.emp_id}",
+            extra={'emp_id': request.user.emp_id, 'action': 'password_change'}
+        )
+        
         return Response({
-            "message": "Password changed successfully!",
+            "message": result.get("message", "Password changed successfully!"),
             "status": "success"
         }, status=status.HTTP_200_OK)
 
+
 # ===========================================================
-# 5. PROFILE (GET / PATCH)
+# 5. PROFILE (GET / PATCH) - FIXED
 # ===========================================================
 class ProfileView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        return Response(ProfileSerializer(request.user).data, status=200)
+        user = User.objects.select_related('department', 'manager').get(pk=request.user.pk)
+        return Response(ProfileSerializer(user).data, status=200)
 
+    @transaction.atomic
     def patch(self, request):
-        user = request.user
+        # Lock user row to prevent race conditions
+        user = User.objects.select_for_update().get(pk=request.user.pk)
+        
         editable = {"first_name", "last_name", "email", "phone"}
         updates = {f: v for f, v in request.data.items() if f in editable}
 
         if not updates:
             return Response({"message": "No valid fields to update."}, status=400)
 
+        # Validate email
         if "email" in updates:
             try:
                 validate_email(updates["email"])
             except ValidationError:
                 return Response({"error": "Invalid email format."}, status=400)
+            
+            # Check uniqueness
             if User.objects.exclude(id=user.id).filter(email__iexact=updates["email"]).exists():
                 return Response({"error": "Email already exists."}, status=400)
 
-        if "phone" in updates and User.objects.exclude(id=user.id).filter(phone=updates["phone"]).exists():
-            return Response({"error": "Phone already exists."}, status=400)
+        # Validate phone
+        if "phone" in updates:
+            if User.objects.exclude(id=user.id).filter(phone=updates["phone"]).exists():
+                return Response({"error": "Phone already exists."}, status=400)
 
+        # Apply updates
         for field, value in updates.items():
             setattr(user, field, value)
 
         user.save(update_fields=list(updates.keys()))
-        logger.info(f"👤 Profile updated by {user.emp_id}")
+        
+        logger.info(
+            f"Profile updated by {user.emp_id}",
+            extra={'emp_id': user.emp_id, 'fields': list(updates.keys())}
+        )
 
         return Response(
             {"message": "Profile updated successfully.", "user": ProfileSerializer(user).data},
             status=200,
         )
-
+    
 
 # ===========================================================
 # 6. ROLE LIST
@@ -304,14 +301,27 @@ class UserListView(generics.ListAPIView):
     pagination_class = UserPagination
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        # Ensure select_related is always applied
+        qs = User.objects.select_related("department", "manager").order_by("emp_id")
+        
         params = self.request.query_params
+        
+        # Status filter
         if "status" in params:
             qs = qs.filter(is_active=(params["status"].lower() == "active"))
+        
+        # Department filter
         if "department" in params:
             qs = qs.filter(department__name__icontains=params["department"])
+        
+        # Employee ID filter
         if "emp_id" in params:
             qs = qs.filter(emp_id__iexact=params["emp_id"])
+        
+        # Role filter (add this)
+        if "role" in params:
+            qs = qs.filter(role__iexact=params["role"])
+        
         return qs
 
     def list(self, request, *args, **kwargs):
@@ -327,18 +337,27 @@ class UserListView(generics.ListAPIView):
 @permission_classes([IsAdminUser])
 @transaction.atomic
 def reset_password(request):
-    emp_id = request.data.get("emp_id")
+    emp_id = (request.data.get("emp_id") or "").strip()
+
     if not emp_id:
         return Response({"error": "emp_id is required."}, status=400)
-
+    
+    # Validate emp_id format
+    if not re.match(r'^EMP\d{4}$', emp_id):
+        return Response({"error": "Invalid emp_id format. Expected format: EMP0001"}, status_code=400)
+    
     user = User.objects.filter(emp_id=emp_id).first()
     if not user:
         return Response({"error": "User not found."}, status=404)
+    
+    if not user.is_active:
+        return Response({"error": "Cannot reset password for inactive user."}, status_code=400)
 
-    new_password = get_random_string(10, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*")
-    user.set_password(new_password)
-    user.force_password_change = True
-    user.save(update_fields=["password", "force_password_change"])
+    # Generate secure password
+    new_password = get_random_string(
+        length=12,
+        allowed_chars="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
+    )
 
     try:
         send_mail(
@@ -357,7 +376,7 @@ def reset_password(request):
     except Exception as e:
         logger.warning(f"Email send failed for {user.emp_id}: {e}")
 
-    logger.info(f"🔄 Password reset by Admin {request.user.emp_id} for user {user.emp_id}")
+    logger.info(f"Password reset by Admin {request.user.emp_id} for user {user.emp_id}")
     data = {"message": f"Password reset successfully for {user.emp_id}.", "force_password_change": True}
     if settings.DEBUG:
         data["temp_password"] = new_password
@@ -385,34 +404,74 @@ class UserDetailView(APIView):
         if not is_admin(admin):
             return Response({"error": "Access denied. Admins only."}, status=403)
 
-        user = self.get_object(emp_id)
+        # Lock user row for update
+        user = User.objects.select_for_update().filter(emp_id=emp_id).first()
         if not user:
             return Response({"error": "User not found."}, status=404)
 
-        editable_fields = ["first_name", "last_name", "email", "phone", "is_verified", "is_active", "department", "manager"]
+        editable_fields = ["first_name", "last_name", "email", "phone", "is_verified", "is_active", "department", "manager", "role"]
         updates = {f: v for f, v in request.data.items() if f in editable_fields}
+
+        # Validate email uniqueness
+        if "email" in updates:
+            if User.objects.exclude(pk=user.pk).filter(email__iexact=updates["email"]).exists():
+                return Response({"error": "Email already exists."}, status=400)
+
+        # Validate phone uniqueness
+        if "phone" in updates:
+            if User.objects.exclude(pk=user.pk).filter(phone=updates["phone"]).exists():
+                return Response({"error": "Phone already exists."}, status=400)
 
         # Manager handling
         if "manager" in updates:
             mgr_val = updates.pop("manager")
-            manager = User.objects.filter(emp_id__iexact=mgr_val).first() or User.objects.filter(username__iexact=mgr_val).first()
-            if not manager:
-                return Response({"error": f"Manager '{mgr_val}' not found."}, status=400)
-            updates["manager"] = manager
+            if mgr_val:
+                manager = (
+                    User.objects.filter(emp_id__iexact=mgr_val).first() 
+                    or User.objects.filter(username__iexact=mgr_val).first()
+                )
+                if not manager:
+                    return Response({"error": f"Manager '{mgr_val}' not found."}, status=400)
+                if manager.role not in ["Manager", "Admin"]:
+                    return Response({"error": "Manager must have role 'Manager' or 'Admin'."}, status=400)
+                updates["manager"] = manager
+            else:
+                updates["manager"] = None
 
+        # Department handling
+        if "department" in updates:
+            dept_val = updates["department"]
+            if dept_val:
+                dept = Department.objects.filter(
+                    models.Q(code__iexact=dept_val) | models.Q(name__iexact=dept_val)
+                ).first()
+                if not dept:
+                    return Response({"error": f"Department '{dept_val}' not found."}, status=400)
+                updates["department"] = dept
+
+        # Apply updates
         for f, v in updates.items():
             setattr(user, f, v)
+        
         user.save(update_fields=list(updates.keys()))
 
-        # Reflect updates in Employee table
+        # Sync with Employee table
         Employee.objects.filter(user=user).update(
             department=user.department,
-            manager=user.manager,
+            role=user.role,
             status="Active" if user.is_active else "Inactive"
         )
 
-        logger.info(f"🛠 User {emp_id} updated by Admin {admin.emp_id}")
-        return Response({"message": "User updated successfully.", "user": ProfileSerializer(user).data}, status=200)
+        logger.info(
+            f"User {emp_id} updated by Admin {admin.emp_id}",
+            extra={'emp_id': emp_id, 'admin': admin.emp_id, 'fields': list(updates.keys())}
+        )
+        
+        return Response({
+            "message": "User updated successfully.", 
+            "user": ProfileSerializer(user).data
+        }, status=200)
+
 
     @transaction.atomic
     def delete(self, request, emp_id):
@@ -477,9 +536,11 @@ def regenerate_password(request):
         return Response({"error": "Cannot regenerate password for inactive user."}, status=400)
 
     # Generate a new secure temporary password
-    first_name = user.first_name or "User"
-    random_part = get_random_string(length=4, allowed_chars="ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
-    new_password = f"{first_name}@{random_part}"
+    # Generate fully random secure password
+    new_password = get_random_string(
+        length=12,
+        allowed_chars="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
+    )
 
     user.set_password(new_password)
     user.force_password_change = True

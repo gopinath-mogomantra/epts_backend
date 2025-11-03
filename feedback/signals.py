@@ -1,67 +1,52 @@
 # ===========================================================
-# feedback/signals.py
+# feedback/signals.py (Enhanced)
 # ===========================================================
+"""
+Enhanced signal handlers for feedback with notification integration.
+"""
 
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
-from django.apps import apps
+from django.core.cache import cache
 import logging
+
+from .models import GeneralFeedback, ManagerFeedback, ClientFeedback
 
 logger = logging.getLogger(__name__)
 
-# ===========================================================
-# Helper — Safe Model Loader
-# ===========================================================
-def get_feedback_models():
-    """Safely load all feedback models without breaking startup."""
-    try:
-        GeneralFeedback = apps.get_model('feedback', 'GeneralFeedback')
-        ManagerFeedback = apps.get_model('feedback', 'ManagerFeedback')
-        ClientFeedback = apps.get_model('feedback', 'ClientFeedback')
-        return [GeneralFeedback, ManagerFeedback, ClientFeedback]
-    except LookupError:
-        logger.warning("Feedback models not ready — skipping signal registration.")
-        return []
 
-
-# ===========================================================
-# Signal Receiver — Handles all Feedback Variants
-# ===========================================================
-@receiver(post_save)
-def feedback_created_handler(sender, instance, created, **kwargs):
+@receiver(post_save, sender=GeneralFeedback)
+@receiver(post_save, sender=ManagerFeedback)
+@receiver(post_save, sender=ClientFeedback)
+def feedback_saved_handler(sender, instance, created, **kwargs):
     """
-    Post-save signal handler for all feedback model variants.
-    Triggers notification/log when new feedback is created.
+    Handle feedback save events.
+    - Clear cache
+    - Log activity
+    - Send notifications (handled in model)
     """
+    if not created:
+        # Feedback was updated
+        logger.info(f"[{sender.__name__}] Updated: {instance.id}")
+        
+        # Clear cache for employee
+        if instance.employee and instance.employee.user:
+            cache_key = f"feedback_summary_{instance.employee.user.id}"
+            cache.delete(cache_key)
 
-    # Only handle events for defined feedback models
-    feedback_models = get_feedback_models()
-    if sender not in feedback_models:
-        return
 
-    if created:
-        emp = getattr(instance, "employee", None)
-        rating = getattr(instance, "rating", None)
-        source = getattr(instance, "source_type", sender.__name__.replace("Feedback", ""))
-
-        emp_name = None
-        if emp and hasattr(emp, "user"):
-            emp_name = f"{emp.user.first_name} {emp.user.last_name}".strip() or emp.user.username
-
-        # Example logging (replace with actual notification/score logic)
-        logger.info(
-            f"New {source} feedback created for employee: {emp_name or 'Unknown'} "
-            f"(Rating: {rating}/10)"
-        )
-
-        # Optional: Trigger Notification Model if available
-        try:
-            Notification = apps.get_model("notifications", "Notification")
-            if emp and hasattr(emp, "user"):
-                Notification.objects.create(
-                    employee=emp.user,
-                    message=f"New {source} feedback added — Rating: {rating}/10",
-                    auto_delete=True,
-                )
-        except Exception as e:
-            logger.warning(f"Notification dispatch failed: {e}")
+@receiver(post_delete, sender=GeneralFeedback)
+@receiver(post_delete, sender=ManagerFeedback)
+@receiver(post_delete, sender=ClientFeedback)
+def feedback_deleted_handler(sender, instance, **kwargs):
+    """
+    Handle feedback deletion.
+    - Clear cache
+    - Log deletion
+    """
+    logger.info(f"[{sender.__name__}] Deleted: {instance.id}")
+    
+    # Clear cache for employee
+    if instance.employee and instance.employee.user:
+        cache_key = f"feedback_summary_{instance.employee.user.id}"
+        cache.delete(cache_key)
